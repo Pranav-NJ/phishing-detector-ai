@@ -361,6 +361,12 @@ phishing-detector-ai/
 │   ├── utils/             # Feature extraction
 │   ├── models/            # Trained ML models
 │   └── main.py           # FastAPI application
+├── phishing-detector-extension/   # Browser extension (Chrome/Edge)
+│   ├── icons/                     # Extension icons (PNG formats)
+│   ├── background.js              # Monitors tabs, sends requests
+│   ├── popup.html                 # Popup UI layout
+│   ├── popup.js                   # Popup script (API call & status)
+│   └── create_icons.py            # (Optional) Script to generate icons
 └── README.md
 ```
 

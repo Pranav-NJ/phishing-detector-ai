@@ -1,110 +1,75 @@
-# Dependencies
+# -----------------------------------------------------
+# NODE / CLIENT / REACT
+# -----------------------------------------------------
 node_modules/
 */node_modules/
+client/node_modules/
+server/node_modules/
 
-# Environment files
+# Ignore node build files
+client/build/
+client/dist/
+
+# Allow package.json (don't ignore)
+!client/package.json
+!client/package-lock.json
+!server/package.json
+!server/package-lock.json
+
+# -----------------------------------------------------
+# ENV FILES
+# -----------------------------------------------------
 .env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
 *.env
+.env.*
 
-# Python
+# -----------------------------------------------------
+# PYTHON
+# -----------------------------------------------------
 __pycache__/
 *.py[cod]
 *$py.class
-*.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
 
 # Virtual environments
 venv/
+.venv/
 env/
 ENV/
-.venv/
 
-# ML Models and Data
-*.pkl
-*.joblib
-*.h5
-*.model
-datasets/
-data/
-*.csv
-*.json
-*.parquet
+# -----------------------------------------------------
+# ML / DATA (ALLOW MODELS & DATA)
+# -----------------------------------------------------
+# ❗ DO NOT ignore data/ or models/ for your project
+# Remove these lines permanently:
+# data/
+# models/
+# ml-api/models/
 
-# Jupyter Notebook
-.ipynb_checkpoints
+# Ignore ONLY large raw datasets (optional)
+data/raw/
+datasets/raw/
 
-# React build
-/client/build/
-/client/dist/
-
-# Logs
+# -----------------------------------------------------
+# LOGS
+# -----------------------------------------------------
 *.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 lerna-debug.log*
 
-# Runtime data
-pids
-*.pid
-*.seed
-*.pid.lock
-
-# Coverage directory used by tools like istanbul
-coverage/
-*.lcov
-
-# ESLint cache
-.eslintcache
-
-# Optional npm cache directory
-.npm
-
-# Optional REPL history
-.node_repl_history
-
-# Output of 'npm pack'
-*.tgz
-
-# Yarn Integrity file
-.yarn-integrity
-
-# IDE
+# -----------------------------------------------------
+# IDE / OS FILES
+# -----------------------------------------------------
 .vscode/
 .idea/
-*.swp
-*.swo
-*~
-
-# OS
 .DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
 Thumbs.db
 
-# Temporary files
+# -----------------------------------------------------
+# MISC
+# -----------------------------------------------------
+.ipynb_checkpoints/
+coverage/
 *.tmp
 *.temp

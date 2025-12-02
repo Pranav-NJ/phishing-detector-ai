@@ -2,6 +2,10 @@ import React, { useState } from 'react';
 import axios from 'axios';
 
 const PhishingDetector = () => {
+  // Use explicit API base if provided (set REACT_APP_API_BASE=http://localhost:5000)
+  // Fall back to relative path so CRA proxy still works in development.
+  const API_BASE = process.env.REACT_APP_API_BASE || '';
+
   const [url, setUrl] = useState('');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
@@ -38,8 +42,8 @@ const PhishingDetector = () => {
     setLoading(true);
     
     try {
-      // Call backend API
-      const response = await axios.post('/api/predict', {
+      // Call backend API (use explicit API base if configured)
+      const response = await axios.post(`${API_BASE}/api/predict`, {
         url: url.trim()
       });
       

@@ -276,7 +276,7 @@ class PhishingDataCollector:
         self.analyze_features(balanced_df)
         
         # Step 6: Save dataset
-        output_file = self.save_dataset(balanced_df, "phishing_dataset_processed.csv")
+        output_file = self.save_dataset(balanced_df, "web-page-phishing.csv")
         
         print("\\n🎉 Data collection and preprocessing completed successfully!")
         print(f"📄 Final dataset: {output_file}")

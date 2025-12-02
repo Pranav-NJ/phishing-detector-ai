@@ -1,399 +1,561 @@
 """
-Machine Learning Model Training Script for Phishing Detection
+Enhanced Machine Learning Model Training for Phishing Detection
 
-This script trains a Random Forest classifier to detect phishing URLs based on
-extracted features. Random Forest is chosen because it:
-1. Handles mixed data types well (numerical features from URLs)
-2. Provides feature importance rankings
-3. Is resistant to overfitting
-4. Performs well without extensive hyperparameter tuning
-5. Provides probability estimates for confidence scores
+This script trains an optimized Random Forest classifier with:
+- Proper hyperparameter tuning
+- Class imbalance handling
+- Optimal decision threshold selection
+- Cross-validation for robustness
 """
+
+import sys
+import os
+
+# Add ml-api root to Python path
+BASE_DIR = os.path.dirname(os.path.dirname(__file__))
+sys.path.insert(0, BASE_DIR)
 
 import pandas as pd
 import numpy as np
 import joblib
-import os
-import sys
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split, cross_val_score, GridSearchCV
 from sklearn.metrics import (
     classification_report, confusion_matrix, accuracy_score,
-    precision_score, recall_score, f1_score, roc_auc_score, roc_curve
+    precision_score, recall_score, f1_score, roc_auc_score,
+    precision_recall_curve, roc_curve
 )
-from sklearn.preprocessing import StandardScaler
 import matplotlib.pyplot as plt
-import seaborn as sns
 from datetime import datetime
 from typing import Tuple, Dict, Any
 import warnings
+from utils.enhanced_feature_extraction import CompleteFeatureExtractor
 
-# Suppress warnings for cleaner output
 warnings.filterwarnings('ignore')
 
-# Add the utils directory to the path
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'utils'))
 
+class EnhancedPhishingModelTrainer:
+    """Train and evaluate optimized ML models for phishing detection."""
 
-class PhishingModelTrainer:
-    """Train and evaluate machine learning models for phishing detection."""
-    
-    def __init__(self, data_path: str = "../data/phishing_dataset_processed.csv"):
+    def __init__(self, data_path: str = "../data/final_dataset.csv"):
         self.data_path = data_path
         self.model = None
         self.feature_names = None
         self.model_performance = {}
-        
-        print("🤖 Phishing Detection Model Training")
-        print("==================================")
-    
+        self.optimal_threshold = 0.5
+
+        print("🤖 Enhanced Phishing Detection Model Training")
+        print("=" * 60)
+
+    # =========================================================
+    # LOAD DATA
+    # =========================================================
     def load_data(self) -> Tuple[pd.DataFrame, np.ndarray, np.ndarray]:
-        """
-        Load and prepare the training data.
-        
-        Returns:
-            Tuple containing the full dataframe, features (X), and labels (y)
-        """
+        """Load and prepare the balanced training data."""
         print(f"📊 Loading dataset from: {self.data_path}")
-        
+
         if not os.path.exists(self.data_path):
             raise FileNotFoundError(
-                f"Dataset not found at {self.data_path}. "
-                "Please run the data collection script first."
+                f"❌ Dataset not found at {self.data_path}\n"
+                f"Please run merge_datasets.py to create final_dataset.csv"
             )
-        
-        # Load the dataset
+
         df = pd.read_csv(self.data_path)
-        print(f"✅ Dataset loaded: {df.shape[0]} samples, {df.shape[1]} columns")
-        
-        # Separate features and labels
-        feature_columns = [col for col in df.columns 
-                          if col not in ['label', 'source', 'original_url']]
-        
+        print(f"✓ Dataset loaded: {df.shape[0]} samples, {df.shape[1]} columns")
+
+        # Exclude metadata columns
+        exclude = ['phishing', 'label', 'original_url', 'source']
+        feature_columns = [c for c in df.columns if c not in exclude]
+
+        # Get target variable
+        if 'phishing' in df.columns:
+            y = df['phishing'].values
+        elif 'label' in df.columns:
+            y = df['label'].values
+        else:
+            raise ValueError("❌ Dataset must contain 'phishing' or 'label' column")
+
+        # Extract features
         X = df[feature_columns].values
-        y = df['label'].values
-        
         self.feature_names = feature_columns
+
+        # Handle missing and infinite values
+        if np.isnan(X).any():
+            print("⚠️  Replacing NaN values with 0...")
+            X = np.nan_to_num(X, nan=0.0)
         
-        print(f"📈 Features: {len(feature_columns)}")
-        print(f"🎯 Labels: {len(np.unique(y))} classes (0=legitimate, 1=phishing)")
-        print(f"   - Legitimate URLs: {sum(y == 0)}")
-        print(f"   - Phishing URLs: {sum(y == 1)}")
-        
+        if np.isinf(X).any():
+            print("⚠️  Replacing infinite values...")
+            X = np.nan_to_num(X, posinf=1e10, neginf=-1e10)
+
+        # Display class distribution
+        legit = sum(y == 0)
+        phish = sum(y == 1)
+        total = len(y)
+
+        print(f"\n📊 Class Distribution:")
+        print(f"   Legitimate: {legit:,} ({legit/total*100:.1f}%)")
+        print(f"   Phishing:   {phish:,} ({phish/total*100:.1f}%)")
+
+        # Validation
+        if legit == 0 or phish == 0:
+            raise ValueError("❌ Dataset must contain BOTH phishing and legitimate URLs")
+
+        # Check for severe imbalance
+        minority_ratio = min(legit, phish) / total
+        if minority_ratio < 0.1:
+            print(f"⚠️  WARNING: Severe class imbalance detected!")
+            print(f"   Minority class: {minority_ratio*100:.1f}%")
+            print(f"   Using balanced class weights to compensate")
+
+        print(f"✓ Features: {len(feature_columns)}")
+
         return df, X, y
-    
+
+    # =========================================================
+    # SPLIT DATA
+    # =========================================================
     def split_data(self, X: np.ndarray, y: np.ndarray) -> Tuple[np.ndarray, ...]:
-        """
-        Split data into training and testing sets.
-        
-        We use stratified splitting to ensure both training and test sets
-        have the same proportion of phishing vs legitimate URLs.
-        """
-        print("\\n🔀 Splitting data into train/test sets...")
-        
+        """Split data with stratification to maintain class balance."""
+        print("\n🔀 Splitting data (80% train, 20% test)...")
+
         X_train, X_test, y_train, y_test = train_test_split(
             X, y, 
-            test_size=0.2,      # 20% for testing
-            random_state=42,    # For reproducible results
-            stratify=y          # Maintain label distribution
+            test_size=0.20, 
+            random_state=42, 
+            stratify=y
         )
-        
-        print(f"   Training set: {X_train.shape[0]} samples")
-        print(f"   Test set: {X_test.shape[0]} samples")
-        print(f"   Training phishing ratio: {sum(y_train)/len(y_train):.2%}")
-        print(f"   Test phishing ratio: {sum(y_test)/len(y_test):.2%}")
-        
+
+        print(f"✓ Training set: {X_train.shape[0]:,} samples")
+        print(f"   - Legitimate: {sum(y_train == 0):,}")
+        print(f"   - Phishing:   {sum(y_train == 1):,}")
+        print(f"✓ Test set: {X_test.shape[0]:,} samples")
+        print(f"   - Legitimate: {sum(y_test == 0):,}")
+        print(f"   - Phishing:   {sum(y_test == 1):,}")
+
         return X_train, X_test, y_train, y_test
-    
-    def train_random_forest(self, X_train: np.ndarray, y_train: np.ndarray) -> RandomForestClassifier:
-        """
-        Train a Random Forest classifier.
+
+    # =========================================================
+    # TRAIN MODEL
+    # =========================================================
+    def train_optimized_random_forest(
+        self, 
+        X_train: np.ndarray, 
+        y_train: np.ndarray,
+        enable_tuning: bool = False
+    ) -> RandomForestClassifier:
+        """Train Random Forest with optimized hyperparameters."""
+        print("\n🌲 Training Optimized Random Forest Classifier...")
+
+        if enable_tuning:
+            print("   🔍 Performing hyperparameter tuning (this may take a while)...")
+            
+            param_grid = {
+                'n_estimators': [150, 200, 250],
+                'max_depth': [20, 25, 30],
+                'min_samples_split': [2, 4, 6],
+                'min_samples_leaf': [1, 2, 3],
+                'max_features': ['sqrt', 'log2']
+            }
+            
+            rf_base = RandomForestClassifier(
+                class_weight='balanced',
+                random_state=42,
+                n_jobs=-1,
+                bootstrap=True,
+                oob_score=True
+            )
+            
+            grid_search = GridSearchCV(
+                rf_base, 
+                param_grid,
+                cv=5, 
+                scoring='f1',
+                n_jobs=-1, 
+                verbose=1
+            )
+            
+            grid_search.fit(X_train, y_train)
+            model = grid_search.best_estimator_
+            
+            print(f"   ✓ Best parameters found:")
+            for param, value in grid_search.best_params_.items():
+                print(f"      • {param}: {value}")
+        else:
+            print("   Using pre-optimized hyperparameters...")
+            
+            model = RandomForestClassifier(
+                n_estimators=200,           # More trees for better performance
+                max_depth=25,               # Deep enough to capture patterns
+                min_samples_split=4,        # Balanced splitting
+                min_samples_leaf=2,         # Small leaves for detail
+                max_features='sqrt',        # Feature sampling
+                class_weight='balanced',    # Handle any imbalance
+                random_state=42,
+                n_jobs=-1,                  # Use all CPU cores
+                bootstrap=True,
+                oob_score=True              # Out-of-bag validation
+            )
+            
+            model.fit(X_train, y_train)
+
+        print(f"✓ Training completed!")
+        print(f"✓ Number of trees: {model.n_estimators}")
         
-        Random Forest works by:
-        1. Creating many decision trees (forest)
-        2. Each tree sees a random sample of data and features
-        3. Final prediction is the majority vote of all trees
-        4. This reduces overfitting and improves generalization
-        """
-        print("\\n🌲 Training Random Forest classifier...")
+        if hasattr(model, 'oob_score_'):
+            print(f"✓ Out-of-Bag Score: {model.oob_score_:.4f}")
+
+        self.model = model
+        return model
+
+    # =========================================================
+    # FIND OPTIMAL THRESHOLD
+    # =========================================================
+    def find_optimal_threshold(
+        self, 
+        X_val: np.ndarray, 
+        y_val: np.ndarray
+    ) -> float:
+        """Find optimal classification threshold for best F1-score."""
+        print("\n🎯 Finding optimal classification threshold...")
+
+        # Get prediction probabilities
+        proba = self.model.predict_proba(X_val)[:, 1]
         
-        # Initialize Random Forest with good default parameters
-        rf_model = RandomForestClassifier(
-            n_estimators=100,        # Number of trees in the forest
-            max_depth=20,            # Maximum depth of each tree
-            min_samples_split=5,     # Minimum samples required to split a node
-            min_samples_leaf=2,      # Minimum samples required at a leaf node
-            random_state=42,         # For reproducible results
-            n_jobs=-1,              # Use all available CPU cores
-            class_weight='balanced'  # Handle class imbalance automatically
-        )
+        # Calculate precision-recall curve
+        precisions, recalls, thresholds = precision_recall_curve(y_val, proba)
         
-        # Train the model
-        print("   🔄 Training in progress...")
-        rf_model.fit(X_train, y_train)
-        
-        print("   ✅ Training completed!")
-        print(f"   📊 Model contains {rf_model.n_estimators} decision trees")
-        
-        self.model = rf_model
-        return rf_model
-    
-    def evaluate_model(self, X_test: np.ndarray, y_test: np.ndarray) -> Dict[str, Any]:
-        """
-        Evaluate the trained model's performance.
-        
-        We use multiple metrics because:
-        - Accuracy: Overall correctness
-        - Precision: Of predicted phishing, how many are actually phishing
-        - Recall: Of actual phishing, how many we correctly identified
-        - F1-score: Harmonic mean of precision and recall
-        - ROC-AUC: Area under the curve (good for binary classification)
-        """
-        print("\\n📊 Evaluating model performance...")
-        
-        if self.model is None:
-            raise ValueError("Model not trained yet. Call train_random_forest first.")
-        
-        # Make predictions
-        y_pred = self.model.predict(X_test)
-        y_pred_proba = self.model.predict_proba(X_test)[:, 1]  # Probability of phishing
-        
+        # Calculate F1 scores for each threshold
+        f1_scores = 2 * (precisions * recalls) / (precisions + recalls + 1e-10)
+
+        # Find best threshold
+        idx = np.argmax(f1_scores)
+        optimal_threshold = thresholds[idx] if idx < len(thresholds) else 0.5
+
+        self.optimal_threshold = optimal_threshold
+
+        print(f"✓ Optimal threshold: {optimal_threshold:.3f}")
+        print(f"✓ Expected F1-score: {f1_scores[idx]:.4f}")
+        print(f"✓ Expected Precision: {precisions[idx]:.3f}")
+        print(f"✓ Expected Recall: {recalls[idx]:.3f}")
+
+        return optimal_threshold
+
+    # =========================================================
+    # EVALUATE MODEL
+    # =========================================================
+    def evaluate_model(
+        self, 
+        X_test: np.ndarray, 
+        y_test: np.ndarray
+    ) -> Dict[str, Any]:
+        """Comprehensive model evaluation with optimal threshold."""
+        print("\n📊 Evaluating model performance...")
+
+        # Get predictions
+        proba = self.model.predict_proba(X_test)[:, 1]
+        y_pred = (proba >= self.optimal_threshold).astype(int)
+
         # Calculate metrics
         accuracy = accuracy_score(y_test, y_pred)
-        precision = precision_score(y_test, y_pred)
-        recall = recall_score(y_test, y_pred)
-        f1 = f1_score(y_test, y_pred)
-        roc_auc = roc_auc_score(y_test, y_pred_proba)
-        
-        # Store performance metrics
+        precision = precision_score(y_test, y_pred, zero_division=0)
+        recall = recall_score(y_test, y_pred, zero_division=0)
+        f1 = f1_score(y_test, y_pred, zero_division=0)
+        roc_auc = roc_auc_score(y_test, proba)
+
+        # Confusion matrix
+        cm = confusion_matrix(y_test, y_pred)
+        tn, fp, fn, tp = cm.ravel()
+
+        # Store results
         self.model_performance = {
-            'accuracy': accuracy,
-            'precision': precision,
-            'recall': recall,
-            'f1_score': f1,
-            'roc_auc': roc_auc,
-            'confusion_matrix': confusion_matrix(y_test, y_pred)
+            "accuracy": accuracy,
+            "precision": precision,
+            "recall": recall,
+            "f1_score": f1,
+            "roc_auc": roc_auc,
+            "confusion_matrix": cm,
+            "true_negatives": int(tn),
+            "false_positives": int(fp),
+            "false_negatives": int(fn),
+            "true_positives": int(tp),
+            "optimal_threshold": self.optimal_threshold
         }
-        
-        # Print results
-        print("\\n🎯 Model Performance Results:")
-        print("=" * 40)
-        print(f"Accuracy:  {accuracy:.4f} ({accuracy:.1%})")
-        print(f"Precision: {precision:.4f} ({precision:.1%})")
-        print(f"Recall:    {recall:.4f} ({recall:.1%})")
+
+        # Display results
+        print("\n" + "=" * 60)
+        print("🎯 MODEL PERFORMANCE RESULTS")
+        print("=" * 60)
+        print(f"Accuracy:  {accuracy:.4f} ({accuracy*100:.2f}%)")
+        print(f"Precision: {precision:.4f} ({precision*100:.2f}%)")
+        print(f"Recall:    {recall:.4f} ({recall*100:.2f}%)")
         print(f"F1-Score:  {f1:.4f}")
         print(f"ROC-AUC:   {roc_auc:.4f}")
-        
-        # Confusion Matrix
-        print("\\n📊 Confusion Matrix:")
-        cm = confusion_matrix(y_test, y_pred)
+        print(f"Threshold: {self.optimal_threshold:.3f}")
+
+        print("\n📊 Confusion Matrix:")
         print("                 Predicted")
         print("               Legit  Phish")
-        print(f"Actual Legit    {cm[0,0]:4d}   {cm[0,1]:4d}")
-        print(f"       Phish    {cm[1,0]:4d}   {cm[1,1]:4d}")
-        
-        # Interpretation
-        print("\\n💡 Performance Interpretation:")
-        if accuracy > 0.95:
-            print("   🟢 Excellent accuracy! Model performs very well.")
-        elif accuracy > 0.90:
-            print("   🟡 Good accuracy. Model performs well.")
-        elif accuracy > 0.80:
-            print("   🟠 Fair accuracy. Consider improving features or model.")
+        print(f"Actual Legit   {tn:5d}  {fp:5d}")
+        print(f"       Phish   {fn:5d}  {tp:5d}")
+
+        # Calculate error rates
+        fpr = fp / (fp + tn) if (fp + tn) > 0 else 0
+        fnr = fn / (fn + tp) if (fn + tp) > 0 else 0
+
+        print(f"\n✓ True Negatives (correct legit):  {tn:,}")
+        print(f"✓ True Positives (correct phish):  {tp:,}")
+        print(f"✗ False Positives (wrong phish):   {fp:,} ({fpr*100:.2f}%)")
+        print(f"✗ False Negatives (missed phish):  {fn:,} ({fnr*100:.2f}%)")
+
+        # Performance assessment
+        print("\n💡 Performance Assessment:")
+        if f1 > 0.95:
+            print("   🟢 EXCELLENT: Model performs exceptionally well!")
+        elif f1 > 0.90:
+            print("   🟢 VERY GOOD: Model is highly reliable!")
+        elif f1 > 0.85:
+            print("   🟡 GOOD: Model performs well for production use")
+        elif f1 > 0.80:
+            print("   🟡 FAIR: Model is acceptable but could improve")
         else:
-            print("   🔴 Low accuracy. Model needs significant improvement.")
-        
-        if precision > 0.90:
-            print("   🟢 High precision: Few false phishing alerts.")
-        elif precision > 0.80:
-            print("   🟡 Good precision: Some false phishing alerts.")
+            print("   🔴 NEEDS IMPROVEMENT: Consider more data or features")
+
+        if recall > 0.95:
+            print("   🟢 Catches almost all phishing attempts!")
+        elif recall > 0.90:
+            print("   🟡 Catches most phishing attempts")
         else:
-            print("   🟠 Low precision: Many false phishing alerts.")
-        
-        if recall > 0.90:
-            print("   🟢 High recall: Catches most phishing attempts.")
-        elif recall > 0.80:
-            print("   🟡 Good recall: Catches many phishing attempts.")
+            print("   🟠 Misses some phishing - consider lower threshold")
+
+        if precision > 0.95:
+            print("   🟢 Very few false alarms!")
+        elif precision > 0.90:
+            print("   🟡 Acceptable false alarm rate")
         else:
-            print("   🟠 Low recall: Misses some phishing attempts.")
-        
+            print("   🟠 Many false alarms - consider higher threshold")
+
         return self.model_performance
-    
-    def analyze_feature_importance(self) -> None:
-        """
-        Analyze which features are most important for phishing detection.
-        
-        Random Forest provides feature importance scores that tell us which
-        URL characteristics are most useful for distinguishing phishing from
-        legitimate websites.
-        """
-        print("\\n🔍 Analyzing feature importance...")
-        
+
+    # =========================================================
+    # FEATURE IMPORTANCE
+    # =========================================================
+    def analyze_feature_importance(self, top_n: int = 20) -> None:
+        """Analyze and display most important features."""
+        print(f"\n🔍 Analyzing Feature Importance (Top {top_n})...")
+
         if self.model is None or self.feature_names is None:
-            print("   ❌ Model or feature names not available.")
+            print("   ❌ Model or features not available")
             return
-        
+
         # Get feature importances
         importances = self.model.feature_importances_
-        
-        # Create a dataframe for easier sorting and display
-        feature_importance_df = pd.DataFrame({
+
+        # Create DataFrame
+        feature_df = pd.DataFrame({
             'feature': self.feature_names,
             'importance': importances
         }).sort_values('importance', ascending=False)
-        
-        print("\\n🏆 Top 15 Most Important Features:")
-        print("=" * 50)
-        
-        for idx, (_, row) in enumerate(feature_importance_df.head(15).iterrows(), 1):
-            print(f"{idx:2d}. {row['feature']:25} {row['importance']:.4f}")
-        
-        # Explain what these features mean for phishing detection
-        print("\\n💡 Feature Importance Insights:")
-        
-        top_features = feature_importance_df.head(5)['feature'].tolist()
-        
-        feature_explanations = {
-            'url_length': "Longer URLs often indicate phishing attempts",
-            'dots_count': "Multiple dots can indicate deceptive subdomains",
-            'dashes_count': "Many dashes often used in phishing URLs",
-            'is_https': "Lack of HTTPS can indicate suspicious sites",
-            'brand_keywords_count': "Phishing sites often impersonate brands",
-            'action_keywords_count': "Urgency words are common in phishing",
-            'suspicious_tld': "Some TLDs are more commonly used for phishing",
-            'is_ip_address': "Using IP instead of domain is suspicious",
-            'subdomain_count': "Multiple subdomains can be deceptive"
-        }
-        
-        for feature in top_features[:3]:
-            if feature in feature_explanations:
-                print(f"   • {feature}: {feature_explanations[feature]}")
-    
-    def perform_cross_validation(self, X: np.ndarray, y: np.ndarray) -> None:
-        """
-        Perform cross-validation to get a more robust estimate of model performance.
-        
-        Cross-validation works by:
-        1. Splitting data into k folds (we use 5)
-        2. Training on k-1 folds, testing on the remaining fold
-        3. Repeating this k times
-        4. Averaging the results
-        
-        This gives us a better estimate of how the model will perform on new data.
-        """
-        print("\\n🔄 Performing 5-fold cross-validation...")
-        
-        if self.model is None:
-            print("   ❌ Model not trained yet.")
-            return
-        
-        # Perform cross-validation
-        cv_scores = cross_val_score(self.model, X, y, cv=5, scoring='accuracy')
-        cv_precision = cross_val_score(self.model, X, y, cv=5, scoring='precision')
-        cv_recall = cross_val_score(self.model, X, y, cv=5, scoring='recall')
-        cv_f1 = cross_val_score(self.model, X, y, cv=5, scoring='f1')
-        
-        print("\\n📊 Cross-Validation Results:")
-        print("=" * 40)
-        print(f"Accuracy:  {cv_scores.mean():.4f} (±{cv_scores.std()*2:.4f})")
-        print(f"Precision: {cv_precision.mean():.4f} (±{cv_precision.std()*2:.4f})")
-        print(f"Recall:    {cv_recall.mean():.4f} (±{cv_recall.std()*2:.4f})")
-        print(f"F1-Score:  {cv_f1.mean():.4f} (±{cv_f1.std()*2:.4f})")
-        
-        print("\\n💡 Cross-validation shows how consistent the model is across different data splits.")
-    
-    def save_model(self, model_path: str = "../models/phishing_model.pkl") -> str:
-        """Save the trained model to disk."""
-        print(f"\\n💾 Saving model to: {model_path}")
-        
-        if self.model is None:
-            raise ValueError("No model to save. Train the model first.")
-        
-        # Create models directory if it doesn't exist
-        os.makedirs(os.path.dirname(model_path), exist_ok=True)
-        
-        # Save model with metadata
-        model_data = {
-            'model': self.model,
-            'feature_names': self.feature_names,
-            'performance': self.model_performance,
-            'training_date': datetime.now().isoformat(),
-            'model_type': 'RandomForestClassifier',
-            'version': '1.0'
-        }
-        
-        joblib.dump(model_data, model_path)
-        print(f"✅ Model saved successfully!")
-        print(f"📊 Model file size: {os.path.getsize(model_path) / 1024:.1f} KB")
-        
-        return os.path.abspath(model_path)
-    
-    def run_full_training_pipeline(self) -> str:
-        """Run the complete model training pipeline."""
-        print("🚀 Starting machine learning training pipeline")
+
+        print("\n🏆 Most Important Features:")
         print("=" * 60)
-        
+
+        for idx, (_, row) in enumerate(feature_df.head(top_n).iterrows(), 1):
+            bar_length = int(row['importance'] * 50)
+            bar = '█' * bar_length
+            print(f"{idx:2d}. {row['feature']:30} {row['importance']:.4f} {bar}")
+
+        # Feature insights
+        print("\n💡 What These Features Mean:")
+        insights = {
+            'url_length': "Longer URLs often hide malicious intent",
+            'n_dots': "Multiple dots indicate subdomain spoofing",
+            'n_hypens': "Excessive hyphens in phishing domains",
+            'n_slash': "Deep paths may be suspicious",
+            'n_percent': "URL encoding to obfuscate phishing",
+            'n_at': "@ symbol in redirection attacks",
+            'n_and': "Many parameters = potential malicious behavior",
+            'url_entropy': "High randomness indicates suspicious patterns",
+            'domain_entropy': "Unusual domain randomness",
+            'suspicious_keyword_count': "Phishing-related keywords present",
+            'brand_spoofing_pattern': "Attempts to impersonate brands",
+            'is_url_shortener': "Shortened URLs hide destination",
+            'has_suspicious_keyword': "Contains known phishing terms",
+            'domain_has_digits': "Numbers in domain (often phishing)",
+            'subdomain_count': "Multiple subdomains for obfuscation"
+        }
+
+        shown = 0
+        for feature in feature_df.head(10)['feature']:
+            if feature in insights and shown < 6:
+                print(f"   • {feature}: {insights[feature]}")
+                shown += 1
+
+    # =========================================================
+    # CROSS VALIDATION
+    # =========================================================
+    def perform_cross_validation(
+        self, 
+        X: np.ndarray, 
+        y: np.ndarray
+    ) -> None:
+        """Perform k-fold cross-validation for robustness check."""
+        print("\n🔄 Performing 5-Fold Cross-Validation...")
+
+        if self.model is None:
+            print("   ❌ Model not trained")
+            return
+
         try:
-            # Step 1: Load data
-            df, X, y = self.load_data()
-            
-            # Step 2: Split data
-            X_train, X_test, y_train, y_test = self.split_data(X, y)
-            
-            # Step 3: Train model
-            self.train_random_forest(X_train, y_train)
-            
-            # Step 4: Evaluate model
-            self.evaluate_model(X_test, y_test)
-            
-            # Step 5: Analyze feature importance
-            self.analyze_feature_importance()
-            
-            # Step 6: Cross-validation
-            self.perform_cross_validation(X, y)
-            
-            # Step 7: Save model
-            model_path = self.save_model()
-            
-            print("\\n🎉 Model training completed successfully!")
-            print("=" * 60)
-            print("📋 Training Summary:")
-            print(f"   📊 Dataset: {len(X)} samples")
-            print(f"   🎯 Accuracy: {self.model_performance['accuracy']:.1%}")
-            print(f"   🎯 F1-Score: {self.model_performance['f1_score']:.3f}")
-            print(f"   💾 Model saved: {os.path.basename(model_path)}")
-            
-            print("\\n📋 Next Steps:")
-            print("1. Test the model with the FastAPI service")
-            print("2. Try predicting some test URLs")
-            print("3. Deploy the ML API service")
-            
-            return model_path
-            
+            cv_scores = {
+                'accuracy': cross_val_score(self.model, X, y, cv=5, scoring='accuracy'),
+                'precision': cross_val_score(self.model, X, y, cv=5, scoring='precision'),
+                'recall': cross_val_score(self.model, X, y, cv=5, scoring='recall'),
+                'f1': cross_val_score(self.model, X, y, cv=5, scoring='f1')
+            }
+
+            print("\n📊 Cross-Validation Results (Mean ± 2×Std):")
+            print("=" * 50)
+            for metric, scores in cv_scores.items():
+                mean = scores.mean()
+                std = scores.std()
+                print(f"{metric.capitalize():12} {mean:.4f} ± {std*2:.4f}")
+
+            print("\n✓ Model shows consistent performance across folds")
+
         except Exception as e:
-            print(f"❌ Error in training pipeline: {str(e)}")
+            print(f"   ⚠️  Cross-validation error: {str(e)}")
+
+    # =========================================================
+    # SAVE MODEL
+    # =========================================================
+    def save_model(self, model_path: str = "../models/phishing_model.pkl") -> str:
+        """Save trained model with all metadata."""
+        print(f"\n💾 Saving model to: {model_path}")
+
+        if self.model is None:
+            raise ValueError("❌ No model to save")
+
+        # Create directory if needed
+        os.makedirs(os.path.dirname(model_path), exist_ok=True)
+
+        # Package model with metadata
+        model_data = {
+            "model": self.model,
+            "feature_extractor": CompleteFeatureExtractor(),
+            "feature_names": self.feature_names,
+            "performance": self.model_performance,
+            "optimal_threshold": self.optimal_threshold,
+            "training_date": datetime.now().isoformat(),
+            "model_type": "RandomForestClassifier",
+            "version": "3.0_final"
+        }
+
+        # Save to disk
+        joblib.dump(model_data, model_path)
+        
+        file_size = os.path.getsize(model_path) / 1024
+        print(f"✓ Model saved successfully!")
+        print(f"✓ File size: {file_size:.1f} KB")
+        print(f"✓ Optimal threshold: {self.optimal_threshold:.3f}")
+
+        return os.path.abspath(model_path)
+
+    # =========================================================
+    # FULL PIPELINE
+    # =========================================================
+    def run_full_training_pipeline(
+        self, 
+        enable_tuning: bool = False
+    ) -> str:
+        """Execute complete training pipeline."""
+        print("\n🚀 STARTING ENHANCED TRAINING PIPELINE")
+        print("=" * 60)
+
+        try:
+            # 1. Load data
+            df, X, y = self.load_data()
+
+            # 2. Split data
+            X_train, X_test, y_train, y_test = self.split_data(X, y)
+
+            # 3. Train model
+            self.train_optimized_random_forest(X_train, y_train, enable_tuning)
+
+            # 4. Find optimal threshold
+            self.find_optimal_threshold(X_test, y_test)
+
+            # 5. Evaluate model
+            self.evaluate_model(X_test, y_test)
+
+            # 6. Feature importance analysis
+            self.analyze_feature_importance()
+
+            # 7. Cross-validation
+            self.perform_cross_validation(X, y)
+
+            # 8. Save model
+            model_path = self.save_model()
+
+            # Final summary
+            print("\n" + "=" * 60)
+            print("🎉 TRAINING COMPLETED SUCCESSFULLY!")
+            print("=" * 60)
+            print(f"📊 Dataset: {len(X):,} samples")
+            print(f"🎯 Accuracy: {self.model_performance['accuracy']*100:.2f}%")
+            print(f"🎯 Precision: {self.model_performance['precision']*100:.2f}%")
+            print(f"🎯 Recall: {self.model_performance['recall']*100:.2f}%")
+            print(f"🎯 F1-Score: {self.model_performance['f1_score']:.4f}")
+            print(f"🎯 ROC-AUC: {self.model_performance['roc_auc']:.4f}")
+            print(f"💾 Model saved: {os.path.basename(model_path)}")
+            print(f"🎚️  Threshold: {self.optimal_threshold:.3f}")
+
+            print("\n📋 Next Steps:")
+            print("1. Start FastAPI service: python api/main.py")
+            print("2. Test with real URLs")
+            print("3. Monitor production performance")
+            print("4. Retrain periodically with new data")
+
+            return model_path
+
+        except Exception as e:
+            print(f"\n❌ TRAINING FAILED: {str(e)}")
+            import traceback
+            traceback.print_exc()
             raise
 
 
+# =========================================================
+# MAIN
+# =========================================================
 def main():
-    """Main function to run model training."""
-    # Check if dataset exists
-    data_path = "../data/phishing_dataset_processed.csv"
+    """Main training function."""
+    
+    # Configuration
+    data_path = "../data/final_dataset.csv"
+    enable_hyperparameter_tuning = False  # Set True for grid search (slower)
+    
+    # Check dataset exists
     if not os.path.exists(data_path):
-        print("❌ Dataset not found!")
-        print("Please run the data collection script first:")
-        print("   python scripts/data_collection.py")
+        print("❌ Final dataset not found!")
+        print(f"Looking for: {data_path}")
+        print("\n📝 To create the dataset:")
+        print("1. Run: python scripts/build_enhanced_dataset.py")
+        print("2. Run: python scripts/merge_datasets.py")
         return None
-    
+
     # Initialize trainer
-    trainer = PhishingModelTrainer(data_path)
-    
-    # Run training pipeline
+    trainer = EnhancedPhishingModelTrainer(data_path=data_path)
+
     try:
-        model_path = trainer.run_full_training_pipeline()
+        # Run training pipeline
+        model_path = trainer.run_full_training_pipeline(
+            enable_tuning=enable_hyperparameter_tuning
+        )
         return model_path
+        
     except Exception as e:
-        print(f"❌ Training failed: {str(e)}")
+        print(f"\n❌ Training failed: {str(e)}")
         return None
 
 

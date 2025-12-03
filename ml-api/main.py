@@ -1,6 +1,6 @@
 """
 FIXED main.py - Complete Phishing Detection FastAPI Service
-Drop-in replacement for your original main.py
+FORCES same model path and FRESH feature extractor as predict_model.py
 """
 
 import os
@@ -19,8 +19,18 @@ from pydantic import BaseModel, field_validator
 import uvicorn
 from dotenv import load_dotenv
 
-# Add current directory to path for imports
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# ============================================================
+# CRITICAL: ADD PATH FOR IMPORTS (SAME AS predict_model.py)
+# ============================================================
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+UTILS_DIR = os.path.join(BASE_DIR, "utils")
+sys.path.insert(0, BASE_DIR)
+sys.path.insert(0, UTILS_DIR)
+
+# ============================================================
+# CRITICAL: IMPORT FRESH FEATURE EXTRACTOR
+# ============================================================
+from enhanced_feature_extraction import CompleteFeatureExtractor
 
 load_dotenv()
 
@@ -30,6 +40,11 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# ============================================================
+# CRITICAL: FORCE EXACT MODEL PATH (SAME AS predict_model.py)
+# ============================================================
+MODEL_PATH = os.path.join(BASE_DIR, "models", "phishing_model.pkl")
 
 # Global variables
 ml_model = None
@@ -77,83 +92,64 @@ class HealthResponse(BaseModel):
 
 
 # ============================================================
-# CRITICAL: RULE-BASED PHISHING DETECTION
+# CRITICAL: RULE-BASED PHISHING DETECTION (EXACT MATCH WITH predict_model.py)
 # ============================================================
 
-def check_rule_based_override(features: Dict, url: str) -> Optional[Dict[str, Any]]:
+def check_rule_based_phishing(features):
+    """Strong rule-based detection for numeric subdomains, brand spoofing, and suspicious TLDs.
+
+    Logic is kept in sync with scripts/predict_model.py so both CLI and API
+    make the same rule-based decisions.
     """
-    🚨 CRITICAL: Detect extreme phishing patterns
-    Returns override prediction or None
-    """
-    
-    # Rule 1: Very long numeric-only subdomain (>15 chars)
-    # Example: http://00000000883838383992929292222.ratingandreviews.in
-    if features.get('subdomain_is_numeric_only', 0) > 0.5:
-        subdomain_length = features.get('subdomain_length', 0)
-        if subdomain_length > 15:
-            logger.warning(f"🚨 RULE 1 TRIGGERED: Long numeric subdomain ({subdomain_length} chars)")
-            return {
-                'prediction': 'phishing',
-                'confidence': 0.98,
-                'rule': 'Long numeric-only subdomain (>15 chars)',
-                'reason': f'Subdomain is {int(subdomain_length)} characters of pure numbers'
-            }
-    
-    # Rule 2: Extremely long subdomain with high numeric content
-    subdomain_length = features.get('subdomain_length', 0)
-    numeric_ratio = features.get('subdomain_numeric_ratio', 0)
-    if subdomain_length > 20 and numeric_ratio > 0.7:
-        logger.warning(f"🚨 RULE 2 TRIGGERED: Very long subdomain ({subdomain_length} chars, {numeric_ratio:.0%} numeric)")
-        return {
-            'prediction': 'phishing',
-            'confidence': 0.96,
-            'rule': 'Very long subdomain with high numeric content',
-            'reason': f'{int(subdomain_length)} char subdomain, {numeric_ratio:.0%} numeric'
-        }
-    
-    # Rule 3: Very long numeric subdomain feature triggered
-    if features.get('very_long_numeric_subdomain', 0) > 0.5:
-        logger.warning("🚨 RULE 3 TRIGGERED: Very long numeric subdomain pattern")
-        return {
-            'prediction': 'phishing',
-            'confidence': 0.95,
-            'rule': 'Very long numeric subdomain pattern detected',
-            'reason': 'Matches known phishing subdomain pattern'
-        }
-    
-    # Rule 4: Multiple strong suspicious indicators (4+)
-    suspicious_score = 0
-    indicators = []
-    
-    if features.get('subdomain_is_numeric_only', 0) > 0.5:
-        suspicious_score += 3
-        indicators.append("numeric-only subdomain")
-    if features.get('long_numeric_subdomain', 0) > 0.5:
-        suspicious_score += 2
-        indicators.append("long numeric subdomain")
-    if features.get('brand_spoofing_pattern', 0) > 0:
-        suspicious_score += 2
-        indicators.append("brand spoofing")
-    if features.get('suspicious_tld', 0) > 0:
-        suspicious_score += 1
-        indicators.append("suspicious TLD")
-    if features.get('is_ip_address', 0) > 0:
-        suspicious_score += 2
-        indicators.append("IP address usage")
-    if features.get('is_https', 0) == 0:
-        suspicious_score += 1
-        indicators.append("no HTTPS")
-    
-    if suspicious_score >= 4:
-        logger.warning(f"🚨 RULE 4 TRIGGERED: Multiple indicators (score: {suspicious_score})")
-        return {
-            'prediction': 'phishing',
-            'confidence': min(0.95, 0.70 + (suspicious_score * 0.05)),
-            'rule': 'Multiple suspicious indicators detected',
-            'reason': f'Found {len(indicators)} indicators: {", ".join(indicators)}'
-        }
-    
-    return None
+
+    # Rule 1: Subdomain all numbers & long (>15 chars)
+    subdomain_numeric_only = features.get("subdomain_is_numeric_only", 0)
+    subdomain_length = features.get("subdomain_length", 0)
+
+    logger.debug(f"   subdomain_is_numeric_only: {subdomain_numeric_only}")
+    logger.debug(f"   subdomain_length: {subdomain_length}")
+
+    if subdomain_numeric_only > 0.5 and subdomain_length > 15:
+        logger.warning(f"🚨 RULE 1: Long numeric subdomain ({subdomain_length} chars)")
+        return True, "Long numeric-only subdomain", 0.98
+
+    # Rule 2: High numeric ratio (>20 chars, >70% numeric)
+    subdomain_numeric_ratio = features.get("subdomain_numeric_ratio", 0)
+    logger.debug(f"   subdomain_numeric_ratio: {subdomain_numeric_ratio}")
+
+    if subdomain_length > 20 and subdomain_numeric_ratio > 0.70:
+        logger.warning(
+            f"🚨 RULE 2: Very long numeric subdomain ({subdomain_length} chars, {subdomain_numeric_ratio:.0%} numeric)"
+        )
+        return True, "Very long numeric subdomain", 0.96
+
+    # Rule 3: Generic numeric explosion
+    very_long_numeric = features.get("very_long_numeric_subdomain", 0)
+    logger.debug(f"   very_long_numeric_subdomain: {very_long_numeric}")
+
+    if very_long_numeric > 0.5:
+        logger.warning("🚨 RULE 3: Excessive numeric subdomain")
+        return True, "Excessive numeric subdomain", 0.95
+
+    # Rule 4: Brand spoofing with suspicious keywords (strong phishing indicator)
+    brand_spoofing = features.get("brand_spoofing_pattern", 0)
+    suspicious_kw_count = features.get("suspicious_keyword_count", 0)
+    logger.debug(f"   brand_spoofing_pattern: {brand_spoofing}")
+    logger.debug(f"   suspicious_keyword_count: {suspicious_kw_count}")
+
+    if brand_spoofing > 0.5 and suspicious_kw_count >= 2:
+        logger.warning("🚨 RULE 4: Brand impersonation with suspicious keywords")
+        return True, "Brand impersonation with suspicious keywords", 0.90
+
+    # Rule 5: Suspicious TLD with suspicious keywords
+    suspicious_tld = features.get("suspicious_tld", 0)
+    logger.debug(f"   suspicious_tld: {suspicious_tld}")
+
+    if suspicious_tld > 0.5 and suspicious_kw_count >= 1:
+        logger.warning("🚨 RULE 5: Suspicious TLD with suspicious keywords")
+        return True, "Suspicious TLD with suspicious keywords", 0.85
+
+    return False, None, 0.0
 
 
 def analyze_url_warnings(url: str, features: Dict) -> List[str]:
@@ -212,7 +208,7 @@ def calculate_risk_score(confidence: float, prediction: str, features: Dict) -> 
     
     # Boost for dangerous features
     if features.get('subdomain_is_numeric_only', 0) > 0.5:
-        score = min(100, score + 20)  # Big boost
+        score = min(100, score + 20)
     if features.get('very_long_numeric_subdomain', 0) > 0.5:
         score = min(100, score + 15)
     if features.get('brand_spoofing_pattern', 0) > 0:
@@ -226,41 +222,52 @@ def calculate_risk_score(confidence: float, prediction: str, features: Dict) -> 
 
 
 # ============================================================
-# MODEL LOADING
+# MODEL LOADING - FORCES SAME PATH AS predict_model.py
 # ============================================================
 
 def load_model():
-    """Load the complete trained model."""
+    """
+    Load the ML model with FRESH feature extractor.
+    FORCES same model path as predict_model.py
+    """
     global ml_model, feature_extractor, model_metadata
     
-    # Try multiple possible paths
-    possible_paths = [
-        os.getenv('MODEL_PATH'),
-        'phishing_model.pkl',
-        'models/phishing_model.pkl',
-        os.path.join(os.path.dirname(__file__), 'phishing_model.pkl'),
-        os.path.join(os.path.dirname(__file__), 'models', 'phishing_model.pkl'),
-    ]
+    logger.info("=" * 70)
+    logger.info("🔧 MODEL LOADING CONFIGURATION")
+    logger.info("=" * 70)
+    logger.info(f"📂 Base Directory: {BASE_DIR}")
+    logger.info(f"📂 Utils Directory: {UTILS_DIR}")
+    logger.info(f"📂 Model Path: {MODEL_PATH}")
+    logger.info("=" * 70)
     
-    model_path = None
-    for path in possible_paths:
-        if path and os.path.exists(path):
-            model_path = path
-            break
-    
-    if not model_path:
-        logger.error("❌ Model file not found!")
-        logger.error("   Please train the model: python train_model.py")
+    # Check if model file exists
+    if not os.path.exists(MODEL_PATH):
+        logger.error(f"❌ Model file NOT found at:")
+        logger.error(f"   {MODEL_PATH}")
+        logger.error("")
+        logger.error("   Train your model first:")
+        logger.error("   python scripts/train_model.py")
+        logger.error("")
         return False
     
     try:
-        logger.info(f"📂 Loading model from: {model_path}")
+        logger.info(f"📂 Loading model from: {MODEL_PATH}")
         
-        model_data = joblib.load(model_path)
+        # Load model data
+        model_data = joblib.load(MODEL_PATH)
         
+        # Get ML model
         ml_model = model_data['model']
-        feature_extractor = model_data.get('feature_extractor')
         
+        # ============================================================
+        # CRITICAL: ALWAYS USE FRESH FEATURE EXTRACTOR
+        # DO NOT use the one stored in the model file (it may be old)
+        # ============================================================
+        logger.info("🔧 Creating FRESH feature extractor...")
+        feature_extractor = CompleteFeatureExtractor()
+        logger.info("✓ Fresh feature extractor created!")
+        
+        # Get metadata
         model_metadata = {
             'type': model_data.get('model_type', 'RandomForest'),
             'version': model_data.get('version', '3.1'),
@@ -270,11 +277,14 @@ def load_model():
             'optimal_threshold': model_data.get('optimal_threshold', 0.5)
         }
         
-        logger.info("✓ Model loaded successfully!")
+        logger.info("=" * 70)
+        logger.info("✅ MODEL LOADED SUCCESSFULLY!")
+        logger.info("=" * 70)
         logger.info(f"   Type: {model_metadata['type']}")
         logger.info(f"   Version: {model_metadata['version']}")
+        logger.info(f"   Training Date: {model_metadata['training_date']}")
         logger.info(f"   Features: {len(model_metadata['feature_names'])}")
-        logger.info(f"   Threshold: {model_metadata['optimal_threshold']:.3f}")
+        logger.info(f"   Optimal Threshold: {model_metadata['optimal_threshold']:.3f}")
         
         if model_metadata['performance']:
             perf = model_metadata['performance']
@@ -282,11 +292,19 @@ def load_model():
             logger.info(f"   Recall: {perf.get('recall', 0)*100:.2f}%")
             logger.info(f"   F1-Score: {perf.get('f1_score', 0):.4f}")
         
+        logger.info("=" * 70)
+        
         return True
         
     except Exception as e:
-        logger.error(f"❌ Error loading model: {str(e)}")
+        logger.error("=" * 70)
+        logger.error("❌ ERROR LOADING MODEL")
+        logger.error("=" * 70)
+        logger.error(f"Error: {str(e)}")
+        logger.error("")
+        logger.error("Stack trace:")
         logger.error(traceback.format_exc())
+        logger.error("=" * 70)
         return False
 
 
@@ -298,22 +316,25 @@ def load_model():
 async def lifespan(app: FastAPI):
     """Manage application lifespan - startup and shutdown."""
     # Startup
-    logger.info("=" * 70)
-    logger.info("🚀 Starting FIXED Phishing Detection API")
+    logger.info("\n" + "=" * 70)
+    logger.info("🚀 STARTING PHISHING DETECTION API")
     logger.info("=" * 70)
     
     success = load_model()
+    
     if not success:
-        logger.error("❌ Failed to load model - API will not work properly")
+        logger.error("=" * 70)
+        logger.error("❌ FAILED TO START - MODEL NOT LOADED")
+        logger.error("=" * 70)
     else:
-        logger.info("✅ Service started successfully!")
+        logger.info("=" * 70)
+        logger.info("✅ SERVICE STARTED SUCCESSFULLY!")
+        logger.info("=" * 70)
     
-    logger.info("=" * 70)
-    
-    yield  # Application runs here
+    yield
     
     # Shutdown
-    logger.info("🔄 Shutting down service...")
+    logger.info("\n🔄 Shutting down service...")
 
 
 # ============================================================
@@ -321,7 +342,7 @@ async def lifespan(app: FastAPI):
 # ============================================================
 
 app = FastAPI(
-    title="Fixed Phishing Detection API",
+    title="Phishing Detection API",
     description="AI-powered phishing detection with enhanced numeric subdomain detection",
     version="3.1.0",
     docs_url="/docs",
@@ -375,10 +396,11 @@ def get_model_dependency():
 async def root():
     """Root endpoint with API information."""
     return {
-        "service": "Fixed Phishing Detection API",
+        "service": "Phishing Detection API",
         "version": "3.1.0",
         "status": "running",
         "model_loaded": ml_model is not None,
+        "model_path": MODEL_PATH,
         "description": "AI-powered phishing detection with rule-based overrides for numeric subdomains",
         "features": [
             "40+ URL features extraction",
@@ -404,18 +426,32 @@ async def root():
 async def predict_url(request: URLRequest, model=Depends(get_model_dependency)):
     """
     Analyze a single URL for phishing detection.
-    
-    Uses both rule-based detection and ML model for accurate results.
-    Rule-based detection catches obvious phishing patterns (like long numeric subdomains).
+    SYNCHRONIZED with predict_model.py for consistent results.
     """
     start_time = datetime.now()
     
     try:
         url = request.url
-        logger.info(f"🔍 Analyzing: {url}")
+        logger.info("=" * 70)
+        logger.info(f"🔍 ANALYZING URL")
+        logger.info("=" * 70)
+        logger.info(f"URL: {url}")
+        logger.info("-" * 70)
         
-        # Extract enhanced features
+        # Extract enhanced features using FRESH extractor
         features = feature_extractor.extract_all_features(url)
+        
+        # DEBUG: Log critical features
+        logger.info("📊 EXTRACTED FEATURES:")
+        logger.info(f"   subdomain_is_numeric_only: {features.get('subdomain_is_numeric_only', 0)}")
+        logger.info(f"   subdomain_length: {features.get('subdomain_length', 0)}")
+        logger.info(f"   subdomain_numeric_ratio: {features.get('subdomain_numeric_ratio', 0):.3f}")
+        logger.info(f"   long_numeric_subdomain: {features.get('long_numeric_subdomain', 0)}")
+        logger.info(f"   very_long_numeric_subdomain: {features.get('very_long_numeric_subdomain', 0)}")
+        logger.info(f"   brand_spoofing_pattern: {features.get('brand_spoofing_pattern', 0)}")
+        logger.info(f"   suspicious_tld: {features.get('suspicious_tld', 0)}")
+        logger.info(f"   is_https: {features.get('is_https', 0)}")
+        logger.info("-" * 70)
         
         # Prepare feature vector in correct order
         feature_names = model_metadata['feature_names']
@@ -424,28 +460,33 @@ async def predict_url(request: URLRequest, model=Depends(get_model_dependency)):
         # Get optimal threshold
         threshold = model_metadata['optimal_threshold']
         
-        # 🚨 CRITICAL: Check rule-based overrides FIRST
-        rule_override = check_rule_based_override(features, url)
-        rule_triggered = None
+        # ===================================================
+        # RULE-BASED CHECK FIRST (EXACT SAME AS predict_model.py)
+        # ===================================================
+        logger.info("🔍 Checking rule-based detection...")
+        is_rule, rule_name, rule_conf = check_rule_based_phishing(features)
         
-        if rule_override:
+        if is_rule:
             # Use rule-based detection
-            prediction = rule_override['prediction']
-            confidence = rule_override['confidence']
-            rule_triggered = rule_override['rule']
+            prediction = "phishing"
+            confidence = rule_conf
+            rule_triggered = rule_name
             
-            logger.info(f"⚠️ RULE TRIGGERED: {rule_triggered}")
-            logger.info(f"   Reason: {rule_override['reason']}")
+            logger.info("=" * 70)
+            logger.info("🚨 RULE-BASED DETECTION TRIGGERED!")
+            logger.info("=" * 70)
+            logger.info(f"   Rule: {rule_triggered}")
+            logger.info(f"   Confidence: {confidence:.3f}")
+            logger.info("=" * 70)
             
             # Set probabilities based on rule
-            if prediction == "phishing":
-                prob_phish = confidence
-                prob_legit = 1.0 - confidence
-            else:
-                prob_legit = confidence
-                prob_phish = 1.0 - confidence
+            prob_phish = confidence
+            prob_legit = 1.0 - confidence
+            
         else:
             # Use ML model
+            logger.info("🤖 Using ML model prediction...")
+            rule_triggered = None
             prediction_proba = model.predict_proba([feature_vector])[0]
             prob_legit = float(prediction_proba[0])
             prob_phish = float(prediction_proba[1])
@@ -456,6 +497,12 @@ async def predict_url(request: URLRequest, model=Depends(get_model_dependency)):
             else:
                 prediction = "legitimate"
                 confidence = prob_legit
+            
+            logger.info(f"   ML Prediction: {prediction.upper()}")
+            logger.info(f"   Confidence: {confidence:.3f}")
+            logger.info(f"   Prob Legitimate: {prob_legit:.3f}")
+            logger.info(f"   Prob Phishing: {prob_phish:.3f}")
+            logger.info(f"   Threshold: {threshold:.3f}")
         
         # Calculate risk
         risk_score = calculate_risk_score(confidence, prediction, features)
@@ -518,15 +565,29 @@ async def predict_url(request: URLRequest, model=Depends(get_model_dependency)):
             warnings=warnings
         )
         
-        logger.info(f"✓ Result: {prediction.upper()} | Risk: {risk_level} ({risk_score}) | Confidence: {confidence:.3f}")
+        logger.info("=" * 70)
+        logger.info("✅ FINAL RESULT")
+        logger.info("=" * 70)
+        logger.info(f"   Prediction: {prediction.upper()}")
+        logger.info(f"   Risk Level: {risk_level}")
+        logger.info(f"   Risk Score: {risk_score}/100")
+        logger.info(f"   Confidence: {confidence:.3f}")
         if rule_triggered:
-            logger.info(f"   Rule: {rule_triggered}")
+            logger.info(f"   Rule Triggered: {rule_triggered}")
+        logger.info(f"   Processing Time: {proc_time:.2f}ms")
+        logger.info("=" * 70 + "\n")
         
         return result
         
     except Exception as e:
-        logger.error(f"❌ Prediction error: {str(e)}")
+        logger.error("=" * 70)
+        logger.error("❌ PREDICTION ERROR")
+        logger.error("=" * 70)
+        logger.error(f"Error: {str(e)}")
+        logger.error("")
+        logger.error("Stack trace:")
         logger.error(traceback.format_exc())
+        logger.error("=" * 70)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Prediction failed: {str(e)}"
@@ -535,9 +596,7 @@ async def predict_url(request: URLRequest, model=Depends(get_model_dependency)):
 
 @app.post("/predict/batch")
 async def predict_batch(urls: List[str], model=Depends(get_model_dependency)):
-    """
-    Analyze multiple URLs in batch (max 50).
-    """
+    """Analyze multiple URLs in batch (max 50)."""
     
     if len(urls) > 50:
         raise HTTPException(
@@ -620,6 +679,7 @@ async def model_info(model=Depends(get_model_dependency)):
         "model_type": model_metadata['type'],
         "version": model_metadata['version'],
         "training_date": model_metadata['training_date'],
+        "model_path": MODEL_PATH,
         "features": {
             "count": len(model_metadata['feature_names']),
             "names": model_metadata['feature_names'][:20] + ["..."] if len(model_metadata['feature_names']) > 20 else model_metadata['feature_names']
@@ -672,10 +732,11 @@ if __name__ == "__main__":
     port = int(os.getenv('PORT', 8000))
     
     print("\n" + "="*70)
-    print("🚀 FIXED PHISHING DETECTION API")
+    print("🚀 PHISHING DETECTION API")
     print("="*70)
     print(f"   Host: {host}")
     print(f"   Port: {port}")
+    print(f"   Model Path: {MODEL_PATH}")
     print(f"   Docs: http://localhost:{port}/docs")
     print(f"   Health: http://localhost:{port}/health")
     print("="*70 + "\n")

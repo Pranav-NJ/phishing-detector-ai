@@ -20,7 +20,13 @@ class CompleteFeatureExtractor:
             'instagram','linkedin','netflix','adobe','dropbox','twitter',
             'coinbase','binance','blockchain','wallet','bank','wellsfargo',
             'chase','citibank','americanexpress','visa','mastercard','yahoo',
-            'outlook','icloud','gmail','whatsapp','telegram'
+            'outlook','icloud','gmail','whatsapp','telegram',
+            # Additional banks and services
+            'desjardins','tangerine','scotiabank','rbc','bmo','td','hsbc',
+            'barclays','santander','lloyds','nationwide','natwest',
+            'usbank','pnc','capitalone','discover','stripe','square',
+            # Additional services
+            'payoneer','venmo','cashapp','zelle','skrill','revolut'
         ]
 
         self.suspicious_keywords = [
@@ -28,7 +34,11 @@ class CompleteFeatureExtractor:
             'signin','account','suspended','limited','expire','urgent',
             'immediate','action','required','alert','warning','locked',
             'unauthorized','unusual','activity','restore','reset','validate',
-            'support','customer','service','help','billing'
+            'support','customer','service','help','billing',
+            # Additional phishing keywords
+            'unique','identifiant','directing','redirect','suspended',
+            'authenticate','reactivate','claim','winner','prize','refund',
+            'tax','invoice','payment','overdue','pending','review'
         ]
 
         self.suspicious_tlds = {

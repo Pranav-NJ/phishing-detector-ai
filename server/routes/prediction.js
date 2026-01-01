@@ -117,7 +117,14 @@ router.post('/predict', async (req, res) => {
       prediction: isPhishing,
       confidence: confidence || 0.5,
       processingTime,
-      success: true
+      success: true,
+      // Pass through all detailed analysis from ML API
+      details: mlData.details || {},
+      risk_level: mlData.risk_level || 'UNKNOWN',
+      risk_score: mlData.risk_score || 0,
+      threshold_used: mlData.threshold_used,
+      warnings: mlData.warnings || [],
+      rule_triggered: mlData.rule_triggered
     });
   } catch (error) {
     console.error('Prediction endpoint error:', error);

@@ -2,12 +2,13 @@
 FIXED Enhanced Machine Learning Model Training for Phishing Detection
 
 CRITICAL FIXES:
-1. Removes ONLY exact URL duplicates (same URL + same label)
-2. Reports but DOES NOT remove feature duplicates (preserves class balance)
-3. Splits data BEFORE any preprocessing
-4. Validates train/test have NO overlap
-5. Detects perfect separator features
-6. Realistic evaluation metrics
+1. **INVERTS DATASET LABELS** - The dataset has inverted labels (0=phishing, 1=legitimate)
+2. Removes ONLY exact URL duplicates (same URL + same label)
+3. Reports but DOES NOT remove feature duplicates (preserves class balance)
+4. Splits data BEFORE any preprocessing
+5. Validates train/test have NO overlap
+6. Detects perfect separator features
+7. Realistic evaluation metrics
 
 This will give you 85-95% accuracy (NOT 100%!) and preserve your phishing class.
 """
@@ -160,10 +161,23 @@ class EnhancedPhishingModelTrainer:
             raise ValueError("❌ Dataset must contain 'phishing' or 'label' column")
 
         # =====================================================
-        # Remove biased features (is_https, is_http)
+        # CRITICAL FIX: INVERT LABELS
+        # The dataset has inverted labels: 0=phishing, 1=legitimate
+        # We need to flip them to: 0=legitimate, 1=phishing
+        # =====================================================
+        print(f"\n🔧 INVERTING DATASET LABELS (0=phishing → 1=phishing, 1=legitimate → 0=legitimate)")
+        print(f"   Before inversion - 0s: {sum(y == 0)}, 1s: {sum(y == 1)}")
+        y = 1 - y  # Invert: 0 becomes 1, 1 becomes 0
+        print(f"   After inversion  - 0s (legitimate): {sum(y == 0)}, 1s (phishing): {sum(y == 1)}")
+        print(f"✓ Labels inverted successfully!")
+
+        # =====================================================
+        # Remove biased features (is_https, is_http, has_query_params)
+        # These features create bias because legitimate sites in dataset
+        # are 100% HTTPS while phishing sites are only 50% HTTPS
         # =====================================================
         exclude = ['phishing', 'label', 'original_url', 'source']
-        biased_features = ['is_https', 'is_http']
+        biased_features = ['is_https', 'is_http', 'has_query_params', 'no_protocol']
         
         feature_columns = [c for c in df.columns if c not in exclude]
         features_to_remove = [f for f in biased_features if f in feature_columns]
@@ -171,7 +185,8 @@ class EnhancedPhishingModelTrainer:
         if features_to_remove:
             print(f"\n🔧 Removing biased features: {features_to_remove}")
             feature_columns = [c for c in feature_columns if c not in features_to_remove]
-            print(f"✓ Removed {len(features_to_remove)} biased features")
+            print(f"✓ Removed {len(features_to_remove)} biased features (prevents HTTPS bias)")
+        
 
         # Extract features
         X = df[feature_columns].values
@@ -735,16 +750,36 @@ class EnhancedPhishingModelTrainer:
 # =========================================================
 def main():
     """Main training function."""
+    import argparse
     
-    data_path = "../data/final_dataset.csv"
-    enable_hyperparameter_tuning = False
+    parser = argparse.ArgumentParser(description='Train phishing detection model')
+    parser.add_argument('--dataset', type=str, default='../data/final_dataset.csv',
+                       help='Path to dataset CSV file')
+    parser.add_argument('--augmented', action='store_true',
+                       help='Use augmented dataset (removes HTTPS bias)')
+    parser.add_argument('--tune', action='store_true',
+                       help='Enable hyperparameter tuning (slow)')
+    
+    args = parser.parse_args()
+    
+    # Use augmented dataset if specified
+    if args.augmented:
+        data_path = "../data/final_dataset_augmented.csv"
+        print("🔧 Using AUGMENTED dataset (HTTPS bias removed)")
+    else:
+        data_path = args.dataset
+    
+    enable_hyperparameter_tuning = args.tune
     
     if not os.path.exists(data_path):
         print("❌ Dataset not found!")
         print(f"   Looking for: {data_path}")
         print("\n📝 Create dataset first:")
-        print("   1. python scripts/build_enhanced_dataset.py")
-        print("   2. python scripts/merge_datasets.py")
+        if args.augmented:
+            print("   python scripts/augment_dataset.py")
+        else:
+            print("   1. python scripts/build_enhanced_dataset.py")
+            print("   2. python scripts/merge_datasets.py")
         return None
 
     trainer = EnhancedPhishingModelTrainer(data_path=data_path)

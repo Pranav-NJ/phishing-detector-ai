@@ -523,6 +523,128 @@ async def predict_url(request: URLRequest, model=Depends(get_model_dependency)):
         # Generate warnings
         warnings = analyze_url_warnings(url, features)
         
+        # Extract detailed URL structure
+        import urllib.parse
+        import tldextract
+        parsed = urllib.parse.urlparse(url)
+        extracted = tldextract.extract(url)
+        
+        # Find suspicious keywords
+        suspicious_keywords_found = []
+        url_lower = url.lower()
+        for keyword in feature_extractor.suspicious_keywords:
+            if keyword in url_lower:
+                suspicious_keywords_found.append(keyword)
+        
+        # Find brand keywords
+        brand_keywords_found = []
+        brand_locations = []
+        for keyword in feature_extractor.brand_keywords:
+            if keyword in url_lower:
+                brand_keywords_found.append(keyword)
+        
+        if brand_keywords_found:
+            if features.get('brand_in_domain', 0):
+                brand_locations.append("domain")
+            if features.get('brand_in_subdomain', 0):
+                brand_locations.append("subdomain")
+            if features.get('brand_in_path', 0):
+                brand_locations.append("path")
+        
+        # Build phishing indicators list
+        phishing_indicators = []
+        if features.get('suspicious_tld', 0):
+            phishing_indicators.append({
+                "type": "Suspicious TLD",
+                "description": f"TLD '.{extracted.suffix}' is commonly used for phishing",
+                "severity": "high"
+            })
+        if features.get('domain_has_digits', 0):
+            phishing_indicators.append({
+                "type": "Domain Contains Digits",
+                "description": "Unusual for legitimate sites",
+                "severity": "medium"
+            })
+        if features.get('subdomain_is_numeric_only', 0):
+            phishing_indicators.append({
+                "type": "Numeric Subdomain",
+                "description": "Strong phishing indicator",
+                "severity": "critical"
+            })
+        if features.get('long_numeric_subdomain', 0):
+            phishing_indicators.append({
+                "type": "Long Numeric Subdomain",
+                "description": f"Subdomain has {int(features.get('subdomain_length', 0))} characters",
+                "severity": "high"
+            })
+        if features.get('brand_spoofing_pattern', 0):
+            phishing_indicators.append({
+                "type": "Brand Spoofing",
+                "description": "Brand name in subdomain (not main domain)",
+                "severity": "critical"
+            })
+        if features.get('brand_in_path', 0):
+            phishing_indicators.append({
+                "type": "Brand in Path",
+                "description": "Possible impersonation attempt",
+                "severity": "high"
+            })
+        if features.get('has_php_extension', 0):
+            phishing_indicators.append({
+                "type": "PHP Extension",
+                "description": "Common in phishing sites",
+                "severity": "medium"
+            })
+        if features.get('path_depth', 0) > 3:
+            phishing_indicators.append({
+                "type": "Deep Path Structure",
+                "description": f"{int(features.get('path_depth', 0))} levels deep",
+                "severity": "medium"
+            })
+        if features.get('url_length', 0) > 75:
+            phishing_indicators.append({
+                "type": "Long URL",
+                "description": f"{int(features.get('url_length', 0))} characters - often used to hide malicious intent",
+                "severity": "low"
+            })
+        if features.get('is_https', 0) == 0:
+            phishing_indicators.append({
+                "type": "No HTTPS",
+                "description": "Security risk",
+                "severity": "medium"
+            })
+        if features.get('is_ip_address', 0):
+            phishing_indicators.append({
+                "type": "IP Address",
+                "description": "Uses IP instead of domain name",
+                "severity": "high"
+            })
+        if suspicious_keywords_found:
+            phishing_indicators.append({
+                "type": "Suspicious Keywords",
+                "description": f"Found: {', '.join(suspicious_keywords_found[:5])}",
+                "severity": "medium"
+            })
+        if brand_keywords_found:
+            phishing_indicators.append({
+                "type": "Brand Keywords Detected",
+                "description": f"Brands: {', '.join(brand_keywords_found)} in {', '.join(brand_locations)}",
+                "severity": "high"
+            })
+        
+        # Build positive indicators list
+        positive_indicators = []
+        if features.get('is_https', 0):
+            positive_indicators.append("Uses HTTPS")
+        if not features.get('suspicious_tld', 0):
+            positive_indicators.append("Standard TLD")
+        if not features.get('domain_has_digits', 0):
+            positive_indicators.append("No digits in domain")
+        if features.get('url_length', 0) < 50:
+            positive_indicators.append("Short, clean URL")
+        if features.get('is_pure_brand_domain', 0):
+            positive_indicators.append("Pure brand domain")
+        
         # Processing time
         proc_time = (datetime.now() - start_time).total_seconds() * 1000
         
@@ -543,6 +665,24 @@ async def predict_url(request: URLRequest, model=Depends(get_model_dependency)):
                     "legitimate": round(prob_legit, 4),
                     "phishing": round(prob_phish, 4)
                 },
+                "url_structure": {
+                    "protocol": parsed.scheme,
+                    "domain": f"{extracted.domain}.{extracted.suffix}",
+                    "subdomain": extracted.subdomain if extracted.subdomain else None,
+                    "path": parsed.path if parsed.path and parsed.path != '/' else None,
+                    "query": parsed.query if parsed.query else None,
+                    "tld": extracted.suffix
+                },
+                "domain_analysis": {
+                    "domain_length": int(features.get('domain_length', 0)),
+                    "has_digits": bool(features.get('domain_has_digits', 0)),
+                    "subdomain_length": int(features.get('subdomain_length', 0)) if features.get('subdomain_length', 0) > 0 else None,
+                    "subdomain_numeric_ratio": f"{features.get('subdomain_numeric_ratio', 0):.0%}" if features.get('subdomain_length', 0) > 0 else None
+                },
+                "phishing_indicators": phishing_indicators,
+                "positive_indicators": positive_indicators,
+                "suspicious_keywords": suspicious_keywords_found,
+                "brand_keywords": brand_keywords_found,
                 "key_indicators": {
                     "numeric_subdomain": bool(features.get('subdomain_is_numeric_only', 0) > 0.5),
                     "long_numeric_subdomain": bool(features.get('long_numeric_subdomain', 0) > 0.5),
@@ -555,11 +695,10 @@ async def predict_url(request: URLRequest, model=Depends(get_model_dependency)):
                     "is_https": bool(features.get('is_https', 0)),
                     "suspicious_keywords": int(features.get('suspicious_keyword_count', 0))
                 },
-                "url_structure": {
-                    "length": int(features.get('url_length', 0)),
-                    "domain_length": int(features.get('domain_length', 0)),
-                    "subdomain_count": int(features.get('subdomain_count', 0)),
-                    "path_depth": int(features.get('path_depth', 0))
+                "metrics": {
+                    "url_length": int(features.get('url_length', 0)),
+                    "path_depth": int(features.get('path_depth', 0)),
+                    "subdomain_count": int(features.get('subdomain_count', 0))
                 }
             },
             warnings=warnings

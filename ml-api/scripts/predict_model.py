@@ -63,7 +63,10 @@ def predict_url(url):
     # Load model
     model_data = joblib.load(MODEL_PATH)
     model = model_data["model"]
-    feature_extractor = model_data["feature_extractor"]
+    
+    # Create FRESH feature extractor (model doesn't store it)
+    feature_extractor = CompleteFeatureExtractor()
+    
     feature_names = model_data["feature_names"]
     threshold = model_data["optimal_threshold"]
 
@@ -118,31 +121,146 @@ def predict_url(url):
     print(f"\nMethod Used: {method}")
 
     # ===================================================
-    # Display key indicators
+    # Analyze URL and extract detailed indicators
     # ===================================================
-    print("\n📊 Key Indicators:")
-    print(f"   Subdomain length: {features.get('subdomain_length', 0)}")
-    print(f"   Numeric ratio: {features.get('subdomain_numeric_ratio', 0):.2f}")
-    print(f"   All numeric: {bool(features.get('subdomain_is_numeric_only', 0))}")
-    print(f"   Long numeric: {bool(features.get('long_numeric_subdomain', 0))}")
-    print(f"   Very long numeric: {bool(features.get('very_long_numeric_subdomain', 0))}")
-    print(f"   Suspicious TLD: {bool(features.get('suspicious_tld', 0))}")
-    print(f"   Brand spoofing: {bool(features.get('brand_spoofing_pattern', 0))}")
-    print(f"   HTTPS: {bool(features.get('is_https', 0))}")
-    print(f"   Suspicious keywords: {int(features.get('suspicious_keyword_count', 0))}")
-
-    # Warning summary
-    warnings = []
-    if features.get("brand_spoofing_pattern", 0): warnings.append("Brand spoofing detected")
-    if features.get("suspicious_tld", 0): warnings.append("Suspicious TLD")
-    if features.get("is_https", 0) == 0: warnings.append("Not using HTTPS")
-    if features.get("subdomain_is_numeric_only", 0): warnings.append("Numeric-only subdomain")
-
-    if warnings:
-        print("\n⚠️ Warnings:")
-        for w in warnings:
-            print(f"   - {w}")
-
+    import urllib.parse
+    import tldextract
+    
+    parsed = urllib.parse.urlparse(url)
+    extracted = tldextract.extract(url)
+    
+    # Find which suspicious keywords were detected
+    suspicious_keywords_found = []
+    url_lower = url.lower()
+    for keyword in feature_extractor.suspicious_keywords:
+        if keyword in url_lower:
+            suspicious_keywords_found.append(keyword)
+    
+    # Find which brand keywords were detected
+    brand_keywords_found = []
+    for keyword in feature_extractor.brand_keywords:
+        if keyword in url_lower:
+            brand_keywords_found.append(keyword)
+    
+    # ===================================================
+    # Display detailed analysis
+    # ===================================================
+    print("\n📊 DETAILED ANALYSIS:")
+    print("=" * 60)
+    
+    # URL Structure
+    print("\n🔗 URL Structure:")
+    print(f"   Protocol: {parsed.scheme}")
+    print(f"   Domain: {extracted.domain}.{extracted.suffix}")
+    if extracted.subdomain:
+        print(f"   Subdomain: {extracted.subdomain}")
+    if parsed.path and parsed.path != '/':
+        print(f"   Path: {parsed.path}")
+    if parsed.query:
+        print(f"   Query: {parsed.query[:50]}...")
+    
+    # Domain Analysis
+    print(f"\n🌐 Domain Analysis:")
+    print(f"   Domain length: {int(features.get('domain_length', 0))} characters")
+    print(f"   Has digits in domain: {'Yes' if features.get('domain_has_digits', 0) else 'No'}")
+    if extracted.subdomain:
+        print(f"   Subdomain length: {int(features.get('subdomain_length', 0))} characters")
+        print(f"   Subdomain numeric ratio: {features.get('subdomain_numeric_ratio', 0):.0%}")
+    print(f"   TLD: .{extracted.suffix}")
+    
+    # Suspicious Indicators
+    print(f"\n⚠️  PHISHING INDICATORS:")
+    indicators = []
+    
+    # Check all suspicious patterns
+    if features.get('suspicious_tld', 0):
+        indicators.append(f"❌ Suspicious TLD (.{extracted.suffix}) - commonly used for phishing")
+    
+    if features.get('domain_has_digits', 0):
+        indicators.append(f"❌ Domain contains digits - unusual for legitimate sites")
+    
+    if features.get('subdomain_is_numeric_only', 0):
+        indicators.append(f"❌ Numeric-only subdomain - strong phishing indicator")
+    
+    if features.get('long_numeric_subdomain', 0):
+        indicators.append(f"❌ Long numeric subdomain (>{features.get('subdomain_length', 0)} chars)")
+    
+    if features.get('very_long_numeric_subdomain', 0):
+        indicators.append(f"❌ Very long numeric subdomain - likely phishing")
+    
+    if features.get('brand_spoofing_pattern', 0):
+        indicators.append(f"❌ Brand spoofing: brand name in subdomain (not main domain)")
+    
+    if features.get('brand_in_path', 0):
+        indicators.append(f"❌ Brand name in URL path - possible impersonation")
+    
+    if features.get('has_php_extension', 0):
+        indicators.append(f"❌ Uses .php extension - common in phishing sites")
+    
+    if features.get('path_depth', 0) > 3:
+        indicators.append(f"❌ Deep path structure ({int(features.get('path_depth', 0))} levels) - suspicious")
+    
+    if features.get('url_length', 0) > 75:
+        indicators.append(f"❌ Long URL ({int(features.get('url_length', 0))} chars) - often used to hide malicious intent")
+    
+    if features.get('is_https', 0) == 0:
+        indicators.append(f"⚠️  Not using HTTPS - security risk")
+    
+    if features.get('is_ip_address', 0):
+        indicators.append(f"❌ Uses IP address instead of domain name")
+    
+    if features.get('long_subdomain', 0):
+        indicators.append(f"❌ Unusually long subdomain")
+    
+    if features.get('is_url_shortener', 0):
+        indicators.append(f"❌ URL shortener detected - hides real destination")
+    
+    # Show suspicious keywords found
+    if suspicious_keywords_found:
+        indicators.append(f"❌ Suspicious keywords detected ({len(suspicious_keywords_found)}): {', '.join(suspicious_keywords_found[:5])}")
+    
+    # Show brand keywords found
+    if brand_keywords_found:
+        location = []
+        if features.get('brand_in_domain', 0):
+            location.append("domain")
+        if features.get('brand_in_subdomain', 0):
+            location.append("subdomain")
+        if features.get('brand_in_path', 0):
+            location.append("path")
+        indicators.append(f"❌ Brand names found in {', '.join(location)}: {', '.join(brand_keywords_found)}")
+    
+    if indicators:
+        for indicator in indicators:
+            print(f"   {indicator}")
+    else:
+        print("   ✅ No major phishing indicators detected")
+    
+    # Positive indicators
+    print(f"\n✅ POSITIVE INDICATORS:")
+    positive = []
+    
+    if features.get('is_https', 0):
+        positive.append("✓ Uses HTTPS")
+    
+    if not features.get('suspicious_tld', 0):
+        positive.append("✓ Standard TLD")
+    
+    if not features.get('domain_has_digits', 0):
+        positive.append("✓ No digits in domain")
+    
+    if features.get('url_length', 0) < 50:
+        positive.append("✓ Short, clean URL")
+    
+    if features.get('is_pure_brand_domain', 0):
+        positive.append("✓ Pure brand domain (not in subdomain)")
+    
+    if positive:
+        for p in positive:
+            print(f"   {p}")
+    else:
+        print("   (None found)")
+    
     print("\n" + "=" * 60)
 
     return prediction, confidence

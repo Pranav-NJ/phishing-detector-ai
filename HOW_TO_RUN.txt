@@ -1,0 +1,319 @@
+================================================================================
+PHISHING DETECTOR AI - COMPLETE RUNNING PROCEDURE
+================================================================================
+
+PREREQUISITES
+================================================================================
+1. Python 3.10+ installed
+2. Node.js 16+ and npm installed
+3. MongoDB installed and running (or MongoDB Atlas account)
+4. Git installed
+
+
+INSTALLATION STEPS
+================================================================================
+
+Step 1: Install Python Dependencies
+------------------------------------
+Open PowerShell and navigate to ml-api folder:
+
+    cd ml-api
+    pip install -r requirements.txt
+
+Required packages:
+- fastapi
+- uvicorn
+- scikit-learn
+- pandas
+- numpy
+- joblib
+- tldextract
+- python-dotenv
+
+
+Step 2: Install Backend Server Dependencies
+--------------------------------------------
+Navigate to server folder:
+
+    cd ..\server
+    npm install
+
+Required packages:
+- express
+- mongoose
+- axios
+- joi
+- dotenv
+- cors
+
+
+Step 3: Install Frontend Dependencies
+--------------------------------------
+Navigate to client folder:
+
+    cd ..\client
+    npm install
+
+Required packages:
+- react
+- axios
+
+
+Step 4: Configure Environment Variables
+----------------------------------------
+Create .env file in server folder with:
+
+    ML_API_URL=http://localhost:8000
+    ML_API_ENDPOINT=/predict
+    MONGODB_URI=mongodb://localhost:27017/phishing-detector
+    PORT=5000
+    CORS_ORIGIN=http://localhost:3000
+
+
+================================================================================
+TRAINING THE MODEL (FIRST TIME OR RETRAINING)
+================================================================================
+
+Navigate to ml-api folder and run:
+
+    cd ml-api
+    python scripts/train_model.py --augmented
+
+This will:
+- Load the balanced dataset (55,296 URLs)
+- Remove HTTPS bias
+- Train Random Forest model with 55 features
+- Save model to models/phishing_model.pkl
+- Expected accuracy: ~90-93%
+- Training time: 2-5 minutes
+
+Model details:
+- Threshold: 0.484 (balanced dataset)
+- Precision: 97.02%
+- Recall: 80.44%
+- F1-Score: 0.8795
+
+
+================================================================================
+RUNNING THE APPLICATION
+================================================================================
+
+You need to run 3 separate terminals:
+
+Terminal 1: ML API Server (Python)
+-----------------------------------
+STEP 1 - Train the model (REQUIRED first time, skip if already trained):
+    cd ml-api
+    python scripts/train_model.py --augmented
+
+    Expected output:
+    ✅ TRAINING COMPLETE
+    Accuracy: 90.90%
+    Model saved to: ../models/phishing_model.pkl
+
+STEP 2 - Start ML API server:
+    python -m uvicorn main:app --reload --port 8000
+
+    Expected output:
+    ✅ MODEL LOADED SUCCESSFULLY!
+    Optimal Threshold: 0.484
+    Accuracy: 90.90%
+    ✅ SERVICE STARTED SUCCESSFULLY!
+
+API runs on: http://localhost:8000
+
+
+Terminal 2: Backend Server (Node.js)
+-------------------------------------
+    cd server
+    node server.js
+
+Expected output:
+    🚀 Server running on port 5000
+    ✅ MongoDB connected successfully
+
+Backend runs on: http://localhost:5000
+
+
+Terminal 3: Frontend (React)
+-----------------------------
+    cd client
+    npm start
+
+Expected output:
+    Compiled successfully!
+    Local: http://localhost:3000
+
+Frontend runs on: http://localhost:3000
+
+
+================================================================================
+TESTING THE APPLICATION
+================================================================================
+
+1. Open browser and go to: http://localhost:3000
+
+2. Test with known phishing URLs:
+   - https://005pyn4t.com/bg/directing/desjardins/identifiantunique/index.php
+   - http://www.shprakserf.gq
+   
+3. Test with legitimate URLs:
+   - https://www.google.com
+   - https://www.github.com
+
+4. CLI Testing (optional):
+   cd ml-api
+   python scripts/predict_model.py "YOUR_URL_HERE"
+
+
+================================================================================
+IMPORTANT NOTES
+================================================================================
+
+1. Model File Location:
+   - models/phishing_model.pkl (5.5+ MB)
+   - Must be trained before running
+
+2. Dataset Location:
+   - data/final_dataset_augmented.csv (balanced dataset)
+   - data/final_dataset.csv (original dataset)
+
+3. Port Configuration:
+   - ML API: 8000
+   - Backend: 5000
+   - Frontend: 3000
+   - MongoDB: 27017
+
+4. After Model Retraining:
+   - MUST restart ML API server to load new model
+   - Server caches model in memory
+
+5. HTTPS vs HTTP:
+   - Model is trained on BALANCED HTTPS distribution
+   - Both HTTP and HTTPS versions of URLs are analyzed fairly
+
+
+================================================================================
+TROUBLESHOOTING
+================================================================================
+
+Problem: "Port already in use"
+Solution:
+    # Find process on port (e.g., 8000)
+    Get-NetTCPConnection -LocalPort 8000
+    
+    # Kill process
+    Stop-Process -Id PROCESS_ID -Force
+
+Problem: "ML service unavailable"
+Solution:
+    - Check if ML API is running on port 8000
+    - Verify model file exists: models/phishing_model.pkl
+    - Check ML_API_URL in server/.env
+
+Problem: "MongoDB connection failed"
+Solution:
+    - Start MongoDB service
+    - Check MONGODB_URI in server/.env
+    - Verify MongoDB is running: mongod --version
+
+Problem: "Model not found"
+Solution:
+    - Train the model first:
+      cd ml-api
+      python scripts/train_model.py --augmented
+
+Problem: "Empty detailed analysis on frontend"
+Solution:
+    - Restart backend server (node server.js)
+    - Clear browser cache and refresh
+    - Check browser console for errors
+
+Problem: "Different results CLI vs Frontend"
+Solution:
+    - Restart ML API server after retraining
+    - Verify both use same model file
+    - Check model timestamps match
+
+
+================================================================================
+QUICK START (After Installation)
+================================================================================
+
+1. Start MongoDB (if not already running)
+
+2. Terminal 1 - ML API (Train Model & Run Server):
+   cd ml-api
+   
+   # First, train the model (REQUIRED - only once or when retraining)
+   python scripts/train_model.py --augmented
+   
+   # Then, start the ML API server
+   python -m uvicorn main:app --reload --port 8000
+
+3. Terminal 2 - Backend Server:
+   cd server
+   node server.js
+
+4. Terminal 3 - Frontend:
+   cd client
+   npm start
+
+5. Open browser: http://localhost:3000
+
+6. Enter URL and click "Analyze URL"
+
+
+================================================================================
+DEVELOPMENT TIPS
+================================================================================
+
+- Frontend auto-reloads on code changes
+- Backend auto-reloads with nodemon (if installed)
+- ML API auto-reloads with uvicorn --reload flag
+- Check browser DevTools Console for API responses
+- Check terminal logs for server errors
+
+
+================================================================================
+PROJECT STRUCTURE
+================================================================================
+
+phishing-detector-ai/
+├── ml-api/                 # Python ML API (FastAPI)
+│   ├── models/            # Trained model files
+│   ├── scripts/           # Training and prediction scripts
+│   ├── utils/             # Feature extraction utilities
+│   └── main.py            # FastAPI server
+│
+├── server/                # Node.js backend
+│   ├── routes/           # API routes
+│   ├── models/           # MongoDB models
+│   └── server.js         # Express server
+│
+├── client/               # React frontend
+│   ├── src/
+│   │   └── components/   # React components
+│   └── public/           # Static files
+│
+└── data/                 # Datasets
+    ├── final_dataset_augmented.csv  # Balanced dataset
+    └── final_dataset.csv            # Original dataset
+
+
+================================================================================
+SUPPORT & DOCUMENTATION
+================================================================================
+
+For more information, see:
+- README.md - Project overview
+- FIX_SUMMARY.md - Bug fixes and improvements
+- ml-api/scripts/train_model.py - Training pipeline details
+
+Model Performance:
+- 90.90% accuracy on test set
+- 97.02% precision (very few false positives)
+- 80.44% recall (catches 80% of phishing)
+- HTTPS bias removed via dataset augmentation
+
+================================================================================

@@ -1,0 +1,1184 @@
+================================================================================
+PHISHING DETECTOR AI - PROJECT EXECUTION FLOW
+Complete Step-by-Step Workflow & File Dependencies
+================================================================================
+
+
+PART 1: PROJECT STARTUP SEQUENCE
+================================================================================
+
+STEP 1: Install Dependencies
+================================================================================
+
+When you first get the project or after cloning:
+
+Location: Project root folder
+Files: requirements.txt, package.json (in server and client)
+
+Execution Commands:
+
+Terminal 1 - ML API Setup:
+$ cd ml-api
+$ pip install -r requirements.txt
+
+  This reads: ml-api/requirements.txt
+  Files Created:
+  - Python virtual environment with packages:
+    * fastapi
+    * uvicorn
+    * scikit-learn
+    * pandas
+    * numpy
+    * joblib
+    * tldextract
+    * python-dotenv
+
+Terminal 2 - Backend Setup:
+$ cd server
+$ npm install
+
+  This reads: server/package.json
+  Files Created:
+  - node_modules/ folder with packages:
+    * express
+    * mongoose
+    * axios
+    * joi
+    * dotenv
+    * cors
+
+Terminal 3 - Frontend Setup:
+$ cd client
+$ npm install
+
+  This reads: client/package.json
+  Files Created:
+  - node_modules/ folder with packages:
+    * react
+    * axios
+    * react-dom
+
+
+STEP 2: Train the Machine Learning Model
+================================================================================
+
+ONLY NEEDED ONCE (or when retraining with new data)
+
+Terminal 1 - ML API:
+$ cd ml-api
+$ python scripts/train_model.py --augmented
+
+FILE EXECUTION CHAIN:
+┌─────────────────────────────────────────────────┐
+│ train_model.py (ENTRY POINT)                    │
+│ Location: ml-api/scripts/train_model.py         │
+└──────────────────┬──────────────────────────────┘
+                   │
+                   ├─→ IMPORTS:
+                   │   - pandas (read CSV)
+                   │   - numpy (numerical ops)
+                   │   - scikit-learn (ML algorithms)
+                   │   - joblib (save model)
+                   │   - tldextract (URL parsing)
+                   │
+                   ├─→ IMPORTS CompleteFeatureExtractor:
+                   │   Location: ml-api/utils/enhanced_feature_extraction.py
+                   │   Purpose: Extract 57 features from URLs
+                   │
+                   └─→ MAIN PROCESS:
+
+Step 2a: Load Raw Dataset
+--------------------------
+Data Source: ../data/final_dataset_augmented.csv
+(This is the balanced dataset with 55,296 URLs)
+
+train_model.py reads the CSV:
+  import pandas as pd
+  df = pd.read_csv('../data/final_dataset_augmented.csv')
+
+Output: DataFrame with columns:
+  - url (the phishing/legitimate URL)
+  - label (0=legitimate, 1=phishing)
+  - feature_1, feature_2, ..., feature_61 (raw features)
+
+Step 2b: Data Cleaning
+-----------------------
+train_model.py calls:
+  from enhanced_feature_extraction import CompleteFeatureExtractor
+  feature_extractor = CompleteFeatureExtractor()
+
+CompleteFeatureExtractor processes each URL:
+  - Extract 57 features (calculate dynamically)
+  - Remove duplicates
+  - Handle missing values
+  - Check for data leakage
+  - Invert labels if needed
+
+Step 2c: Dataset Splitting
+---------------------------
+train_model.py uses scikit-learn:
+  from sklearn.model_selection import train_test_split
+  
+  X_train, X_test, y_train, y_test = train_test_split(
+      X, y, test_size=0.2, random_state=42)
+
+Output:
+  - Training set: 44,236 URLs (80%)
+  - Test set: 11,060 URLs (20%)
+
+Step 2d: Model Training
+-----------------------
+train_model.py trains Random Forest:
+  from sklearn.ensemble import RandomForestClassifier
+  
+  model = RandomForestClassifier(
+      n_estimators=100,
+      max_depth=20,
+      min_samples_split=10)
+  
+  model.fit(X_train, y_train)
+
+Process:
+  - Creates 100 decision trees
+  - Each tree learns different patterns
+  - Trees vote on final prediction
+  - Training time: 2-5 minutes
+
+Step 2e: Cross Validation
+--------------------------
+train_model.py validates:
+  from sklearn.model_selection import cross_val_score
+  
+  scores = cross_val_score(model, X_train, y_train, cv=5)
+
+Result: Tests on 5 different data splits
+  - Ensures generalization
+  - Detects overfitting
+  - Average accuracy reported
+
+Step 2f: Threshold Optimization
+-------------------------------
+train_model.py finds optimal threshold:
+  - Default threshold: 0.5
+  - Our optimized threshold: 0.484
+  - Maximizes F1-score
+  - Balances precision and recall
+
+Step 2g: Save Trained Model
+----------------------------
+train_model.py saves:
+  import joblib
+  joblib.dump(model, '../models/phishing_model.pkl')
+
+Output File: ml-api/models/phishing_model.pkl (5.5 MB)
+Contains:
+  - Trained Random Forest (100 trees)
+  - Feature names and order
+  - Model metadata (accuracy, threshold, etc.)
+  - Ready for predictions
+
+TRAINING COMPLETE ✓
+
+
+PART 2: SERVER STARTUP SEQUENCE
+================================================================================
+
+STEP 3: Start ML API Server (Python)
+================================================================================
+
+Terminal 1 - ML API:
+$ cd ml-api
+$ python -m uvicorn main:app --reload --port 8000
+
+FILE EXECUTION CHAIN:
+┌─────────────────────────────────────────────────┐
+│ main.py (ENTRY POINT)                           │
+│ Location: ml-api/main.py                        │
+└──────────────────┬──────────────────────────────┘
+                   │
+                   ├─→ IMPORTS:
+                   │   - fastapi (API framework)
+                   │   - uvicorn (ASGI server)
+                   │   - joblib (load model)
+                   │   - pandas, numpy (data handling)
+                   │
+                   ├─→ IMPORTS CompleteFeatureExtractor:
+                   │   Location: ml-api/utils/enhanced_feature_extraction.py
+                   │   Purpose: Extract features from new URLs
+                   │
+                   └─→ STARTUP PROCESS:
+
+Step 3a: Create FastAPI App
+----------------------------
+main.py:
+  from fastapi import FastAPI
+  app = FastAPI()
+
+Creates REST API endpoints:
+  - POST /predict (main prediction endpoint)
+  - GET /health (health check)
+  - GET / (root endpoint)
+
+Step 3b: Load Trained Model
+----------------------------
+main.py:
+  import joblib
+  MODEL_PATH = os.path.join(BASE_DIR, "models", "phishing_model.pkl")
+  ml_model = joblib.load(MODEL_PATH)
+
+Loads:
+  - Trained Random Forest model (100 trees)
+  - Feature names and metadata
+  - Optimal threshold (0.484)
+  - Model accuracy info
+
+Step 3c: Create Feature Extractor
+----------------------------------
+main.py:
+  from enhanced_feature_extraction import CompleteFeatureExtractor
+  feature_extractor = CompleteFeatureExtractor()
+
+Creates fresh instance for extracting features from new URLs
+
+Step 3d: Start Uvicorn Server
+-----------------------------
+Command: python -m uvicorn main:app --reload --port 8000
+
+Starts ASGI server:
+  - Listens on http://localhost:8000
+  - Ready to receive requests
+  - Logs all requests
+  - Auto-reloads on code changes (--reload flag)
+
+Output: "Application startup complete"
+
+ML API Server Running ✓ on port 8000
+
+
+STEP 4: Start Backend Server (Node.js)
+================================================================================
+
+Terminal 2 - Backend:
+$ cd server
+$ node server.js
+
+FILE EXECUTION CHAIN:
+┌─────────────────────────────────────────────────┐
+│ server.js (ENTRY POINT)                         │
+│ Location: server/server.js                      │
+└──────────────────┬──────────────────────────────┘
+                   │
+                   ├─→ IMPORTS:
+                   │   - express (web framework)
+                   │   - mongoose (MongoDB driver)
+                   │   - axios (HTTP client for ML API)
+                   │   - cors (cross-origin)
+                   │   - dotenv (environment variables)
+                   │
+                   ├─→ IMPORTS MODELS:
+                   │   Location: server/models/Prediction.js
+                   │   Purpose: Define MongoDB schema
+                   │
+                   ├─→ IMPORTS ROUTES:
+                   │   Location: server/routes/prediction.js
+                   │   Purpose: Handle /api/predict endpoint
+                   │
+                   └─→ STARTUP PROCESS:
+
+Step 4a: Load Environment Variables
+------------------------------------
+server.js:
+  require('dotenv').config()
+  
+  Reads: server/.env
+  Contains:
+    - ML_API_URL=http://localhost:8000
+    - MONGODB_URI=mongodb://localhost:27017/phishing-detector
+    - PORT=5000
+    - CORS_ORIGIN=http://localhost:3000
+
+Step 4b: Create Express App
+---------------------------
+server.js:
+  const app = express()
+  
+  app.use(express.json())
+  app.use(cors({origin: process.env.CORS_ORIGIN}))
+
+Sets up:
+  - JSON parsing middleware
+  - CORS for frontend requests
+  - Error handling
+
+Step 4c: Connect MongoDB
+------------------------
+server.js:
+  mongoose.connect(process.env.MONGODB_URI)
+  
+  Purpose:
+    - Store prediction history
+    - Log all URLs analyzed
+    - For analytics and debugging
+
+Step 4d: Setup Routes
+--------------------
+server.js:
+  app.use('/api', require('./routes/prediction.js'))
+  
+  Includes: server/routes/prediction.js
+  Provides:
+    - POST /api/predict (main endpoint)
+    - GET /api/history (recent predictions)
+
+Step 4e: Start Express Server
+-----------------------------
+server.js:
+  app.listen(process.env.PORT)
+
+Starts server:
+  - Listens on http://localhost:5000
+  - Ready to receive requests from frontend
+  - Forwards requests to ML API
+
+Backend Server Running ✓ on port 5000
+
+
+STEP 5: Start Frontend (React)
+================================================================================
+
+Terminal 3 - Frontend:
+$ cd client
+$ npm start
+
+FILE EXECUTION CHAIN:
+┌─────────────────────────────────────────────────┐
+│ index.js (ENTRY POINT)                          │
+│ Location: client/src/index.js                   │
+└──────────────────┬──────────────────────────────┘
+                   │
+                   ├─→ IMPORTS App Component:
+                   │   Location: client/src/App.js
+                   │
+                   ├─→ App.js IMPORTS Components:
+                   │   Location: client/src/components/PhishingDetector.js
+                   │
+                   └─→ STARTUP PROCESS:
+
+Step 5a: Create React App
+-------------------------
+index.js:
+  import React from 'react'
+  import ReactDOM from 'react-dom'
+  import App from './App'
+  
+  ReactDOM.render(<App />, document.getElementById('root'))
+
+Mounts React app to: client/public/index.html
+
+Step 5b: Load App Component
+---------------------------
+App.js:
+  - Sets up main application layout
+  - Imports PhishingDetector component
+  - Configures API base URL: http://localhost:5000
+
+Step 5c: Load PhishingDetector Component
+---------------------------------------
+PhishingDetector.js:
+  - Main functional component
+  - State management (useState)
+  - Input form for URL
+  - Results display
+  - Imports axios for API calls
+
+Step 5d: Start Development Server
+---------------------------------
+Command: npm start
+
+Webpack bundler:
+  - Bundles all React components
+  - Combines CSS files
+  - Starts dev server on port 3000
+  - Opens browser to http://localhost:3000
+  - Auto-reloads on code changes
+
+Frontend Running ✓ on port 3000
+
+
+PART 3: USER REQUEST FLOW (THE MAIN JOURNEY)
+================================================================================
+
+STEP 6: User Enters URL in Browser
+================================================================================
+
+User Action:
+  1. Opens http://localhost:3000
+  2. Sees React app with input field
+  3. Types URL: "https://005pyn4t.com/bg/directing/desjardins/identifiantunique/index.php"
+  4. Clicks "Analyze URL" button
+
+FILE FLOW:
+┌────────────────────────────────────────────┐
+│ User Browser (http://localhost:3000)       │
+│ Rendered by: client/src/components/        │
+│             PhishingDetector.js            │
+└──────────────┬───────────────────────────────┘
+               │
+               └─→ User inputs URL and clicks button
+
+
+STEP 7: Frontend Processes URL
+================================================================================
+
+File: client/src/components/PhishingDetector.js
+
+Event Handler: handleSubmit()
+  
+Code Flow:
+  1. handleSubmit(e) function triggered
+  2. Validates URL format
+  3. Sets loading state to true
+  4. Prepares request data: {url: "https://..."}
+  5. Makes API call
+
+Code:
+  const handleSubmit = async (e) => {
+    e.preventDefault()
+    setLoading(true)
+    
+    try {
+      const response = await axios.post(
+        `${API_BASE}/api/predict`,
+        { url: url.trim() }
+      )
+      
+      console.log('API Response:', response.data)
+      setResult(response.data)
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+API_BASE is set to: http://localhost:5000
+
+Request Details:
+  - Method: POST
+  - URL: http://localhost:5000/api/predict
+  - Body: {"url": "https://005pyn4t.com/..."}
+  - Headers: Content-Type: application/json
+
+
+STEP 8: Backend Receives Request
+================================================================================
+
+File: server/routes/prediction.js
+
+Endpoint Handler: router.post('/predict', ...)
+
+Step 8a: Validate Input
+-----------------------
+prediction.js:
+  const { error, value } = urlSchema.validate(req.body)
+  
+  Uses: Joi validation library
+  Checks:
+    - URL format is valid
+    - URL not empty
+    - URL not too long (max 2048 chars)
+
+Step 8b: Extract URL
+-------------------
+prediction.js:
+  const { url } = value
+  
+  Extracted URL: "https://005pyn4t.com/..."
+
+Step 8c: Call ML API
+-------------------
+prediction.js:
+  const mlApiUrl = `${process.env.ML_API_URL}/predict`
+  
+  Makes HTTP request:
+    - Method: POST
+    - URL: http://localhost:8000/predict
+    - Body: {url: "https://..."}
+    
+Code:
+  let mlResponse = await axios.post(
+    mlApiUrl,
+    { url },
+    { timeout: 30000 }
+  )
+
+Waiting for response from ML API...
+
+
+STEP 9: ML API Receives URL
+================================================================================
+
+File: ml-api/main.py
+
+Endpoint Handler: @app.post("/predict")
+
+Step 9a: Create Request Object
+------------------------------
+main.py:
+  request: URLRequest
+  
+  URLRequest model validates:
+    - URL field exists
+    - URL is not empty
+
+Step 9b: Extract Features
+--------------------------
+main.py calls:
+  features = feature_extractor.extract_all_features(url)
+
+File: ml-api/utils/enhanced_feature_extraction.py
+Class: CompleteFeatureExtractor
+
+Function: extract_all_features(url)
+
+Process:
+  1. Parse URL into components
+     - Protocol (https)
+     - Domain (005pyn4t.com)
+     - Path (/bg/directing/...)
+     - TLD (.com)
+  
+  2. Calculate 57 features:
+     Feature 1: url_length = 72
+     Feature 2: domain_length = 14
+     Feature 3: subdomain_length = 0
+     Feature 4: n_slash = 5
+     Feature 5: n_dots = 1
+     Feature 6: has_digits = 1
+     Feature 7: is_https = 1
+     ... (plus 50 more features)
+     Feature 57: suspicious_keyword_count = 3
+
+  3. Return feature dictionary:
+     {
+       'url_length': 72,
+       'domain_length': 14,
+       'subdomain_length': 0,
+       'n_slash': 5,
+       ... all 57 features ...
+     }
+
+Step 9c: Convert to Feature Vector
+----------------------------------
+main.py:
+  feature_names = model_metadata['feature_names']
+  feature_vector = [features.get(name, 0.0) for name in feature_names]
+  
+  Creates ordered list of 57 feature values
+  matching the order used during training
+
+Step 9d: Check Rule-Based Detection
+-----------------------------------
+main.py calls:
+  is_rule, rule_name, rule_conf = check_rule_based_phishing(features)
+
+Function: check_rule_based_phishing(features)
+
+Checks:
+  Rule 1: Long numeric subdomain (>15 chars, numeric only)
+    - Our URL: subdomain_length = 0 → Rule NOT triggered
+  
+  Rule 2: Very long numeric subdomain (>20 chars, >70% numeric)
+    - Our URL: subdomain_length = 0 → Rule NOT triggered
+  
+  Rule 3: Brand spoofing + suspicious keywords
+    - Our URL: brand_spoofing_pattern = 1 (desjardins in path)
+    - suspicious_keyword_count = 3 (unique, identifiant, directing)
+    - Rule IS triggered! ✓
+    
+  Result:
+    is_rule = True
+    rule_name = "Brand impersonation with suspicious keywords"
+    rule_conf = 0.90 (90% confidence)
+
+Step 9e: Make ML Prediction
+---------------------------
+Since rule triggered, uses rule-based confidence
+If rule NOT triggered, would use ML model:
+
+main.py:
+  prediction_proba = model.predict_proba([feature_vector])
+  prob_legit = prediction_proba[0][0]
+  prob_phish = prediction_proba[0][1]
+  
+  if prob_phish >= 0.484:  # optimal threshold
+    prediction = "phishing"
+  else:
+    prediction = "legitimate"
+
+Our case (with rule):
+  - prediction = "phishing"
+  - confidence = 0.90
+
+Step 9f: Extract Detailed Analysis
+----------------------------------
+main.py extracts for response:
+  
+  url_structure = {
+    'protocol': 'https',
+    'domain': '005pyn4t.com',
+    'subdomain': None,
+    'path': '/bg/directing/desjardins/identifiantunique/index.php',
+    'tld': 'com'
+  }
+  
+  domain_analysis = {
+    'domain_length': 14,
+    'has_digits': True,
+    'subdomain_length': None,
+    'subdomain_numeric_ratio': None
+  }
+  
+  phishing_indicators = [
+    {
+      'type': 'Domain Contains Digits',
+      'description': 'Unusual for legitimate sites',
+      'severity': 'medium'
+    },
+    {
+      'type': 'Brand in Path',
+      'description': 'Possible impersonation attempt',
+      'severity': 'high'
+    },
+    ... more indicators ...
+  ]
+  
+  positive_indicators = [
+    'Uses HTTPS',
+    'Standard TLD'
+  ]
+  
+  suspicious_keywords = ['unique', 'identifiant', 'directing']
+  brand_keywords = ['desjardins']
+
+Step 9g: Build Response
+----------------------
+main.py creates response object:
+  
+  result = PredictionResponse(
+    url="https://005pyn4t.com/bg/...",
+    prediction="phishing",
+    confidence=0.90,
+    risk_level="HIGH",
+    risk_score=85,
+    processing_time_ms=17.5,
+    model_version="3.3_safe_dedupe",
+    threshold_used=0.484,
+    timestamp="2026-01-04T...",
+    rule_triggered="Brand impersonation with suspicious keywords",
+    details={
+      "probabilities": {...},
+      "url_structure": {...},
+      "domain_analysis": {...},
+      "phishing_indicators": [...],
+      "positive_indicators": [...],
+      "suspicious_keywords": [...],
+      "brand_keywords": [...]
+    },
+    warnings=[...]
+  )
+
+Step 9h: Send Response to Backend
+---------------------------------
+main.py:
+  return result
+
+Returns JSON to backend:
+  Status: 200 OK
+  Body: Complete prediction with all details
+
+ML API Processing Complete ✓
+
+
+STEP 10: Backend Receives ML API Response
+================================================================================
+
+File: server/routes/prediction.js (continuing...)
+
+Step 10a: Extract ML Response Data
+----------------------------------
+prediction.js:
+  const mlData = mlResponse.data
+  const prediction = mlData.prediction
+  const confidence = mlData.confidence
+  
+  Extracts:
+    - prediction: "phishing"
+    - confidence: 0.90
+    - details: {...all analysis...}
+    - risk_level: "HIGH"
+    - etc.
+
+Step 10b: Save to MongoDB (Optional)
+-----------------------------------
+prediction.js:
+  const predictionRecord = new Prediction({
+    url: url,
+    prediction: prediction === 'phishing',
+    confidence: confidence,
+    userAgent: req.get('User-Agent'),
+    ipAddress: req.ip,
+    processingTimeMs: Date.now() - startTime
+  })
+  
+  await predictionRecord.save()
+
+Saves to: MongoDB → phishing-detector database
+Purpose:
+  - Track prediction history
+  - Analytics
+  - Debugging
+
+Step 10c: Prepare Response for Frontend
+--------------------------------------
+prediction.js:
+  res.json({
+    url: url,
+    prediction: true,  // true = phishing
+    confidence: 0.90,
+    processingTime: 28,  // ms
+    success: true,
+    // NEW: Pass through all details from ML API
+    details: mlData.details,
+    risk_level: mlData.risk_level,
+    risk_score: mlData.risk_score,
+    threshold_used: mlData.threshold_used,
+    warnings: mlData.warnings,
+    rule_triggered: mlData.rule_triggered
+  })
+
+Step 10d: Send Response to Frontend
+----------------------------------
+Returns JSON to frontend:
+  Status: 200 OK
+  Body: Complete prediction response
+
+Backend Processing Complete ✓
+
+
+STEP 11: Frontend Receives Response
+================================================================================
+
+File: client/src/components/PhishingDetector.js (continuing...)
+
+Step 11a: Store Response in State
+--------------------------------
+PhishingDetector.js:
+  setResult(response.data)
+  
+  Stores response in React state:
+    - url: "https://005pyn4t.com/..."
+    - prediction: true (phishing)
+    - confidence: 0.90
+    - details: {...}
+    - risk_level: "HIGH"
+    - etc.
+
+Step 11b: Extract Components
+----------------------------
+PhishingDetector.js in renderResult():
+  const { prediction, confidence, details } = result
+  
+  const urlStructure = details?.url_structure || {}
+  const domainAnalysis = details?.domain_analysis || {}
+  const phishingIndicators = details?.phishing_indicators || []
+  const suspiciousKeywords = details?.suspicious_keywords || []
+  const brandKeywords = details?.brand_keywords || []
+  const positiveIndicators = details?.positive_indicators || []
+
+Step 11c: Render Result Component
+--------------------------------
+PhishingDetector.js:
+  return (
+    <div className="result-container result-dangerous">
+      <div className="result-title">
+        🚨 PHISHING DETECTED!
+      </div>
+      
+      <div className="confidence-score">
+        Confidence: 90%
+        Risk Level: HIGH
+      </div>
+      
+      <div className="detailed-analysis">
+        {/* Render URL Structure */}
+        <h4>🔗 URL Structure</h4>
+        • Protocol: https
+        • Domain: 005pyn4t.com
+        • Path: /bg/directing/desjardins/identifiantunique/index.php
+        • TLD: .com
+        
+        {/* Render Domain Analysis */}
+        <h4>🌐 Domain Analysis</h4>
+        • Domain length: 14 characters
+        • Has digits in domain: Yes
+        
+        {/* Render Phishing Indicators */}
+        <h4>⚠️ PHISHING INDICATORS</h4>
+        ❌ Domain Contains Digits
+        ❌ Brand in Path
+        ❌ PHP Extension
+        ❌ Deep Path Structure
+        ❌ Suspicious Keywords
+        ❌ Brand Keywords Detected
+        
+        {/* Render Suspicious Keywords */}
+        <h4>🔍 Suspicious Keywords Found</h4>
+        unique, identifiant, directing
+        
+        {/* Render Brand Keywords */}
+        <h4>🏢 Brand Keywords Detected</h4>
+        desjardins
+        
+        {/* Render Positive Indicators */}
+        <h4>✅ POSITIVE INDICATORS</h4>
+        ✓ Uses HTTPS
+        ✓ Standard TLD
+      </div>
+    </div>
+  )
+
+Step 11d: Display in Browser
+----------------------------
+React renders JSX to HTML
+Browser displays:
+  - Red warning box
+  - "PHISHING DETECTED!" message
+  - 90% confidence
+  - All detailed analysis sections
+  - Formatted and styled result
+
+User sees complete analysis ✓
+
+
+PART 4: COMPLETE SYSTEM ARCHITECTURE
+================================================================================
+
+REQUEST FLOW DIAGRAM:
+
+┌──────────────────────┐
+│   USER BROWSER       │
+│  React App           │
+│ (http://localhost:3000)
+└──────────┬───────────┘
+           │
+           │ User enters URL: "https://..."
+           │ Clicks "Analyze URL"
+           │
+           ↓ axios.post()
+┌──────────────────────────────────────┐
+│ BACKEND SERVER (Node.js)             │
+│ Express on port 5000                 │
+│ server/routes/prediction.js          │
+└──────────┬──────────────────────────┘
+           │
+           │ Validates URL
+           │ Prepares request
+           │
+           ↓ axios.post()
+┌──────────────────────────────────────┐
+│ ML API SERVER (Python)               │
+│ FastAPI on port 8000                 │
+│ ml-api/main.py                       │
+└──────────┬──────────────────────────┘
+           │
+           │ main.py extracts features
+           │ Calls enhanced_feature_extraction.py
+           │
+           ↓
+┌──────────────────────────────────────┐
+│ FEATURE EXTRACTION                   │
+│ ml-api/utils/enhanced_feature_extraction.py
+│ CompleteFeatureExtractor             │
+│ Extracts 57 features from URL        │
+└──────────┬──────────────────────────┘
+           │
+           │ Feature vector [f1, f2, ..., f57]
+           │
+           ↓
+┌──────────────────────────────────────┐
+│ TRAINED MODEL                        │
+│ ml-api/models/phishing_model.pkl     │
+│ Random Forest (100 trees)            │
+│ Predicts: Phishing or Legitimate     │
+└──────────┬──────────────────────────┘
+           │
+           │ Prediction result
+           │ Confidence score
+           │ Detailed analysis
+           │
+           ↓ Response JSON
+┌──────────────────────────────────────┐
+│ BACKEND SERVER (Node.js)             │
+│ Adds to response:                    │
+│ - Database logging                   │
+│ - Safe host overrides                │
+└──────────┬──────────────────────────┘
+           │
+           │ Response JSON
+           │
+           ↓ Response JSON
+┌──────────────────────────────────────┐
+│   USER BROWSER                       │
+│  Displays detailed analysis          │
+│  Shows warning if phishing           │
+└──────────────────────────────────────┘
+
+
+FILE DEPENDENCY MAP:
+================================================================================
+
+CLIENT LAYER (React):
+├── client/src/index.js
+│   └── client/src/App.js
+│       └── client/src/components/PhishingDetector.js
+│           └── axios (HTTP client)
+
+SERVER LAYER (Node.js):
+├── server/server.js
+│   ├── server/routes/prediction.js
+│   │   └── axios (calls ML API)
+│   ├── server/models/Prediction.js
+│   │   └── mongoose (MongoDB)
+│   └── .env (configuration)
+
+ML LAYER (Python):
+├── ml-api/main.py (FastAPI server)
+│   ├── ml-api/utils/enhanced_feature_extraction.py
+│   │   └── tldextract (URL parsing)
+│   └── ml-api/models/phishing_model.pkl (trained model)
+
+DATA LAYER:
+├── data/final_dataset_augmented.csv (training data)
+└── ml-api/models/phishing_model.pkl (trained model)
+
+
+COMPLETE EXECUTION TRACE:
+================================================================================
+
+1. USER ACTION
+   └─ User opens http://localhost:3000
+
+2. FRONTEND LOADED
+   └─ React renders PhishingDetector component
+
+3. USER INPUT
+   └─ User types URL and clicks "Analyze"
+
+4. FRONTEND SENDS REQUEST
+   └─ axios.post('http://localhost:5000/api/predict', {url: '...'})
+
+5. BACKEND RECEIVES
+   └─ server/routes/prediction.js POST /predict handler
+   └─ Validates URL with Joi
+   └─ Prepares axios request to ML API
+
+6. BACKEND CALLS ML API
+   └─ axios.post('http://localhost:8000/predict', {url: '...'})
+
+7. ML API RECEIVES
+   └─ ml-api/main.py @app.post("/predict")
+   └─ Loads request data
+
+8. FEATURE EXTRACTION
+   └─ Calls feature_extractor.extract_all_features(url)
+   └─ Imports CompleteFeatureExtractor from enhanced_feature_extraction.py
+   └─ Extracts 57 features
+   └─ Returns feature dictionary
+
+9. MODEL PREDICTION
+   └─ Loads model from models/phishing_model.pkl
+   └─ Converts features to vector
+   └─ Runs Random Forest prediction
+   └─ Gets probability scores
+   └─ Applies threshold (0.484)
+   └─ Returns prediction: "phishing" or "legitimate"
+
+10. DETAILED ANALYSIS GENERATION
+    └─ Extracts URL structure (protocol, domain, path, TLD)
+    └─ Calculates domain analysis
+    └─ Identifies phishing indicators
+    └─ Detects suspicious keywords
+    └─ Detects brand keywords
+    └─ Lists positive indicators
+    └─ Builds warnings list
+
+11. ML API RETURNS RESPONSE
+    └─ Returns JSON with prediction and details
+    └─ Status 200 OK
+
+12. BACKEND RECEIVES ML RESPONSE
+    └─ Extracts prediction data
+    └─ Optionally logs to MongoDB
+    └─ Prepares response for frontend
+
+13. BACKEND SENDS RESPONSE
+    └─ Returns JSON to frontend
+    └─ Status 200 OK
+
+14. FRONTEND RECEIVES RESPONSE
+    └─ Stores in React state (setResult)
+    └─ Calls renderResult() function
+
+15. FRONTEND RENDERS RESULT
+    └─ Displays prediction (PHISHING/LEGITIMATE)
+    └─ Shows confidence percentage
+    └─ Displays risk level
+    └─ Lists URL structure
+    └─ Shows domain analysis
+    └─ Lists phishing indicators
+    └─ Shows suspicious keywords
+    └─ Shows brand keywords
+    └─ Lists positive indicators
+
+16. USER SEES RESULT
+    └─ Complete analysis in red box (if phishing)
+    └─ Or green box (if legitimate)
+    └─ With detailed breakdown
+
+
+KEY FILES SUMMARY:
+================================================================================
+
+SETUP & TRAINING:
+✓ ml-api/scripts/train_model.py
+  - Trains Random Forest model
+  - Saves to models/phishing_model.pkl
+
+SERVER STARTUP:
+✓ ml-api/main.py
+  - Starts FastAPI server (port 8000)
+  - Loads trained model
+
+✓ server/server.js
+  - Starts Express server (port 5000)
+  - Routes to prediction.js
+
+✓ client/src/index.js → App.js → PhishingDetector.js
+  - React frontend (port 3000)
+
+REQUEST HANDLING:
+✓ client/src/components/PhishingDetector.js
+  - Sends HTTP request to backend
+  - Displays results
+
+✓ server/routes/prediction.js
+  - Receives URL from frontend
+  - Calls ML API
+  - Returns response to frontend
+
+✓ ml-api/main.py
+  - Receives URL from backend
+  - Calls feature extraction
+
+FEATURE PROCESSING:
+✓ ml-api/utils/enhanced_feature_extraction.py
+  - Extracts 57 features from URL
+  - Calculates feature values
+
+MODEL PREDICTION:
+✓ ml-api/models/phishing_model.pkl
+  - Trained Random Forest model
+  - Makes actual prediction
+
+DATA:
+✓ data/final_dataset_augmented.csv
+  - Training dataset (55,296 URLs)
+  - Used by train_model.py
+
+CONFIGURATION:
+✓ server/.env
+  - ML_API_URL
+  - MongoDB URI
+  - Port settings
+  - CORS settings
+
+DEPENDENCIES:
+✓ ml-api/requirements.txt (Python packages)
+✓ server/package.json (Node.js packages)
+✓ client/package.json (React packages)
+
+
+EXECUTION ORDER SUMMARY:
+================================================================================
+
+FOR FIRST TIME:
+1. python scripts/train_model.py --augmented
+2. python -m uvicorn main:app --reload --port 8000 (in Terminal 1)
+3. node server.js (in Terminal 2)
+4. npm start (in Terminal 3)
+
+FOR SUBSEQUENT RUNS:
+1. Skip training, go directly to:
+2. python -m uvicorn main:app --reload --port 8000 (in Terminal 1)
+3. node server.js (in Terminal 2)
+4. npm start (in Terminal 3)
+
+WHEN USER SUBMITS URL:
+1. Frontend sends request
+2. Backend receives and validates
+3. Backend calls ML API
+4. ML API extracts features
+5. Model makes prediction
+6. ML API returns detailed response
+7. Backend returns to frontend
+8. Frontend displays results to user
+
+
+TROUBLESHOOTING FLOW:
+================================================================================
+
+Problem: "Cannot connect to ML API"
+↓
+Check:
+  ├─ Is ML API running on port 8000?
+  ├─ Check: python -m uvicorn main:app --reload --port 8000
+  ├─ Is model file present? ml-api/models/phishing_model.pkl
+  ├─ Has model been trained?
+  └─ Run: python scripts/train_model.py --augmented
+
+Problem: "Backend not responding"
+↓
+Check:
+  ├─ Is backend running on port 5000?
+  ├─ Check: node server.js
+  ├─ Is MongoDB connected?
+  ├─ Check MongoDB connection in .env
+  ├─ Check server logs for errors
+
+Problem: "Frontend not loading"
+↓
+Check:
+  ├─ Is frontend running on port 3000?
+  ├─ Check: npm start
+  ├─ Check browser console for errors
+  ├─ Clear browser cache
+  ├─ Check network tab for API calls
+
+Problem: "Wrong predictions"
+↓
+Check:
+  ├─ Is model trained on correct data?
+  ├─ Retrain: python scripts/train_model.py --augmented
+  ├─ Restart ML API to load new model
+  ├─ Check threshold value in model metadata
+  ├─ Verify feature extraction is correct
+
+================================================================================
+END OF PROJECT FLOW DOCUMENTATION
+================================================================================
+
+This document provides complete understanding of how every component works,
+which files call which, and the complete data flow from user input to result.
+
+For any questions, refer to the appropriate section above.
+
+Last Updated: January 4, 2026

@@ -20,7 +20,7 @@ def main():
         print("Error:", str(e))
         return
 
-    data_path = "../data/final_dataset.csv"
+    data_path = "../data/final_dataset_augmented.csv"
 
     # Load dataset and get safe split
     X_train, X_test, y_train, y_test, feature_names = load_and_split_dataset(

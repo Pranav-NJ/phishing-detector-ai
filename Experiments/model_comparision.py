@@ -28,7 +28,7 @@ warnings.filterwarnings("ignore")
 # 💠 STEP 1 — LOAD & CLEAN DATA EXACTLY LIKE train_model.py
 # ============================================================
 
-def load_clean_data(path="../data/final_dataset.csv"):
+def load_clean_data(path="../data/final_dataset_augmented.csv"):
     df = pd.read_csv(path)
 
     print(f"\nLoaded dataset: {len(df)} rows")

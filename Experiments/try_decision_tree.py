@@ -10,7 +10,7 @@ from Experiments.experiment_utils import load_and_split_dataset, evaluate_model
 
 
 def main():
-    data_path = "../data/final_dataset.csv"
+    data_path = "../data/final_dataset_augmented.csv"
 
     X_train, X_test, y_train, y_test, feature_names = load_and_split_dataset(
         data_path=data_path

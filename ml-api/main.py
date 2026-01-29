@@ -1,6 +1,7 @@
 """
 FIXED main.py - Complete Phishing Detection FastAPI Service
 FORCES same model path and FRESH feature extractor as predict_model.py
+Updated: 2026-01-06 - Enhanced phishing indicators display
 """
 
 import os
@@ -553,84 +554,138 @@ async def predict_url(request: URLRequest, model=Depends(get_model_dependency)):
         
         # Build phishing indicators list
         phishing_indicators = []
-        if features.get('suspicious_tld', 0):
-            phishing_indicators.append({
-                "type": "Suspicious TLD",
-                "description": f"TLD '.{extracted.suffix}' is commonly used for phishing",
-                "severity": "high"
-            })
-        if features.get('domain_has_digits', 0):
-            phishing_indicators.append({
-                "type": "Domain Contains Digits",
-                "description": "Unusual for legitimate sites",
-                "severity": "medium"
-            })
-        if features.get('subdomain_is_numeric_only', 0):
-            phishing_indicators.append({
-                "type": "Numeric Subdomain",
-                "description": "Strong phishing indicator",
-                "severity": "critical"
-            })
-        if features.get('long_numeric_subdomain', 0):
-            phishing_indicators.append({
-                "type": "Long Numeric Subdomain",
-                "description": f"Subdomain has {int(features.get('subdomain_length', 0))} characters",
-                "severity": "high"
-            })
-        if features.get('brand_spoofing_pattern', 0):
-            phishing_indicators.append({
-                "type": "Brand Spoofing",
-                "description": "Brand name in subdomain (not main domain)",
-                "severity": "critical"
-            })
-        if features.get('brand_in_path', 0):
-            phishing_indicators.append({
-                "type": "Brand in Path",
-                "description": "Possible impersonation attempt",
-                "severity": "high"
-            })
-        if features.get('has_php_extension', 0):
-            phishing_indicators.append({
-                "type": "PHP Extension",
-                "description": "Common in phishing sites",
-                "severity": "medium"
-            })
-        if features.get('path_depth', 0) > 3:
-            phishing_indicators.append({
-                "type": "Deep Path Structure",
-                "description": f"{int(features.get('path_depth', 0))} levels deep",
-                "severity": "medium"
-            })
-        if features.get('url_length', 0) > 75:
-            phishing_indicators.append({
-                "type": "Long URL",
-                "description": f"{int(features.get('url_length', 0))} characters - often used to hide malicious intent",
-                "severity": "low"
-            })
-        if features.get('is_https', 0) == 0:
-            phishing_indicators.append({
-                "type": "No HTTPS",
-                "description": "Security risk",
-                "severity": "medium"
-            })
-        if features.get('is_ip_address', 0):
-            phishing_indicators.append({
-                "type": "IP Address",
-                "description": "Uses IP instead of domain name",
-                "severity": "high"
-            })
-        if suspicious_keywords_found:
-            phishing_indicators.append({
-                "type": "Suspicious Keywords",
-                "description": f"Found: {', '.join(suspicious_keywords_found[:5])}",
-                "severity": "medium"
-            })
-        if brand_keywords_found:
-            phishing_indicators.append({
-                "type": "Brand Keywords Detected",
-                "description": f"Brands: {', '.join(brand_keywords_found)} in {', '.join(brand_locations)}",
-                "severity": "high"
-            })
+        
+        # Only add indicators if actually phishing
+        if prediction == "phishing":
+            # Check for suspicious subdomain patterns
+            subdomain_length = int(features.get('subdomain_length', 0))
+            numeric_ratio = features.get('subdomain_numeric_ratio', 0)
+            
+            # Numeric/mixed subdomain indicators
+            if features.get('subdomain_is_numeric_only', 0):
+                phishing_indicators.append({
+                    "type": "Numeric Subdomain",
+                    "description": "Subdomain contains only numbers - strong phishing indicator",
+                    "severity": "critical"
+                })
+            elif subdomain_length > 0 and numeric_ratio > 0.2:
+                phishing_indicators.append({
+                    "type": "Mixed Alphanumeric Subdomain",
+                    "description": f"Subdomain '{extracted.subdomain}' contains {numeric_ratio:.0%} numbers - common in phishing URLs",
+                    "severity": "high"
+                })
+            
+            # Long subdomain
+            if subdomain_length > 8:
+                phishing_indicators.append({
+                    "type": "Long Subdomain",
+                    "description": f"Subdomain is {subdomain_length} characters long - unusual for legitimate sites",
+                    "severity": "high" if subdomain_length > 12 else "medium"
+                })
+            
+            # Suspicious TLD
+            if features.get('suspicious_tld', 0):
+                phishing_indicators.append({
+                    "type": "Suspicious TLD",
+                    "description": f"TLD '.{extracted.suffix}' is commonly used for phishing",
+                    "severity": "high"
+                })
+            
+            # Domain with digits
+            if features.get('domain_has_digits', 0):
+                phishing_indicators.append({
+                    "type": "Domain Contains Digits",
+                    "description": "Unusual for legitimate sites",
+                    "severity": "medium"
+                })
+            
+            # Brand spoofing
+            if features.get('brand_spoofing_pattern', 0):
+                phishing_indicators.append({
+                    "type": "Brand Spoofing",
+                    "description": "Brand name in subdomain (not main domain)",
+                    "severity": "critical"
+                })
+            
+            # Brand in path
+            if features.get('brand_in_path', 0):
+                phishing_indicators.append({
+                    "type": "Brand in Path",
+                    "description": "Possible impersonation attempt",
+                    "severity": "high"
+                })
+            
+            # Path contains email-like pattern
+            if '@' in parsed.path:
+                phishing_indicators.append({
+                    "type": "Email in URL Path",
+                    "description": "URL path contains email address - typical phishing pattern",
+                    "severity": "high"
+                })
+            
+            # Deep path structure
+            if features.get('path_depth', 0) > 3:
+                phishing_indicators.append({
+                    "type": "Deep Path Structure",
+                    "description": f"{int(features.get('path_depth', 0))} levels deep",
+                    "severity": "medium"
+                })
+            
+            # Long URL
+            if features.get('url_length', 0) > 75:
+                phishing_indicators.append({
+                    "type": "Long URL",
+                    "description": f"{int(features.get('url_length', 0))} characters - often used to hide malicious intent",
+                    "severity": "low"
+                })
+            
+            # No HTTPS
+            if features.get('is_https', 0) == 0:
+                phishing_indicators.append({
+                    "type": "No HTTPS",
+                    "description": "Security risk - no encryption",
+                    "severity": "medium"
+                })
+            
+            # IP address as domain
+            if features.get('is_ip_address', 0):
+                phishing_indicators.append({
+                    "type": "IP Address",
+                    "description": "Uses IP instead of domain name",
+                    "severity": "high"
+                })
+            
+            # PHP extension
+            if features.get('has_php_extension', 0):
+                phishing_indicators.append({
+                    "type": "PHP Extension",
+                    "description": "Common in phishing sites",
+                    "severity": "medium"
+                })
+            
+            # Suspicious keywords
+            if suspicious_keywords_found:
+                phishing_indicators.append({
+                    "type": "Suspicious Keywords",
+                    "description": f"Found: {', '.join(suspicious_keywords_found[:5])}",
+                    "severity": "medium"
+                })
+            
+            # Brand keywords
+            if brand_keywords_found:
+                phishing_indicators.append({
+                    "type": "Brand Keywords Detected",
+                    "description": f"Brands: {', '.join(brand_keywords_found)} in {', '.join(brand_locations)}",
+                    "severity": "high"
+                })
+            
+            # If phishing but no specific indicators found, add ML-based explanation
+            if not phishing_indicators and confidence > 0.7:
+                phishing_indicators.append({
+                    "type": "ML Model Detection",
+                    "description": f"Machine learning model detected {int(confidence * 100)}% probability of phishing based on URL patterns",
+                    "severity": "high"
+                })
         
         # Build positive indicators list
         positive_indicators = []

@@ -53,7 +53,7 @@ def remove_url_duplicates(
 # DATA LOADING + SPLITTING (Option 1 behaviour)
 # =========================================================
 def load_and_split_dataset(
-    data_path: str = "../data/final_dataset.csv",
+    data_path: str = "../data/final_dataset_augmented.csv",
     test_size: float = 0.2,
     random_state: int = 42,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, List[str]]:

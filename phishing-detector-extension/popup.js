@@ -8,8 +8,26 @@ document.addEventListener('DOMContentLoaded', () => {
   async function checkCurrentTab() {
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      console.log('Tab info:', tab);
+      
       if (!tab?.url) {
+        console.log('No tab URL found');
         updateUI('error', 'No active tab found');
+        return;
+      }
+
+      console.log('Raw tab URL:', tab.url);
+
+      // Skip extension pages and invalid URLs
+      if (!tab.url || 
+          tab.url.startsWith('chrome://') || 
+          tab.url.startsWith('chrome-extension://') || 
+          tab.url.startsWith('edge://') || 
+          tab.url.startsWith('about:') ||
+          tab.url.startsWith('moz-extension://') ||
+          !tab.url.startsWith('http')) {
+        console.log('Skipping internal URL:', tab.url);
+        updateUI('safe', 'Internal browser page');
         return;
       }
 
@@ -19,32 +37,39 @@ document.addEventListener('DOMContentLoaded', () => {
       // Check if we have cached result
       const result = await chrome.storage.local.get(url.href);
       if (result[url.href]) {
-        updateUI(result[url.href].prediction, result[url.href].confidence);
+        console.log('Using cached result:', result[url.href]);
+        // Backend returns prediction: true for PHISHING, false for SAFE
+        const isPhishing = result[url.href].prediction;
+        updateUI(isPhishing ? 'dangerous' : 'safe', result[url.href].confidence);
+        return;
       }
 
-      // Make a new request
-      try {
-        const response = await fetch("http://localhost:5000/api/predict", {
-          method: "POST",
-          headers: { 
-            "Content-Type": "application/json",
-            "X-Requested-With": "XMLHttpRequest"
-          },
-          credentials: 'include',
-          body: JSON.stringify({ url: url.href })
-        });
-
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
+      // If no cached result, show loading and wait for background script
+      console.log('No cached result, waiting for background script...');
+      updateUI('safe', 'Loading...');
+      
+      // Wait for background script to cache result (retry up to 3 times)
+      let retries = 0;
+      const checkCache = async () => {
+        retries++;
+        const cachedResult = await chrome.storage.local.get(url.href);
+        if (cachedResult[url.href]) {
+          console.log('Got cached result after retry:', cachedResult[url.href]);
+          // Backend returns prediction: true for PHISHING, false for SAFE
+          const isPhishing = cachedResult[url.href].prediction;
+          updateUI(isPhishing ? 'dangerous' : 'safe', cachedResult[url.href].confidence);
+          return;
         }
-
-        const data = await response.json();
-        await chrome.storage.local.set({ [url.href]: data });
-        updateUI(data.prediction, data.confidence);
-      } catch (error) {
-        console.error('Error checking URL:', error);
-        updateUI('error');
-      }
+        
+        if (retries < 3) {
+          setTimeout(checkCache, 1000); // Wait 1 second and retry
+        } else {
+          console.log('No cached result after retries, showing error');
+          updateUI('error');
+        }
+      };
+      
+      setTimeout(checkCache, 500); // Initial wait for background script
 
     } catch (error) {
       console.error('Error:', error);

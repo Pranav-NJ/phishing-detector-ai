@@ -10,6 +10,7 @@ import joblib
 import logging
 from datetime import datetime
 from typing import Dict, List, Optional, Any
+from urllib.parse import urlparse, urlunparse
 import traceback
 from contextlib import asynccontextmanager
 
@@ -432,11 +433,20 @@ async def predict_url(request: URLRequest, model=Depends(get_model_dependency)):
     start_time = datetime.now()
     
     try:
-        url = request.url
+        original_url = request.url.strip()
+        parsed_original = urlparse(original_url)
+        if not parsed_original.scheme:
+            original_url = f"http://{original_url}"
+
+        parsed_normalized = urlparse(original_url)
+        parsed_normalized = parsed_normalized._replace(scheme="https")
+        url = urlunparse(parsed_normalized)
+
         logger.info("=" * 70)
         logger.info(f"🔍 ANALYZING URL")
         logger.info("=" * 70)
-        logger.info(f"URL: {url}")
+        logger.info(f"URL: {original_url}")
+        logger.info(f"Canonical URL: {url}")
         logger.info("-" * 70)
         
         # Extract enhanced features using FRESH extractor
@@ -489,8 +499,22 @@ async def predict_url(request: URLRequest, model=Depends(get_model_dependency)):
             logger.info("🤖 Using ML model prediction...")
             rule_triggered = None
             prediction_proba = model.predict_proba([feature_vector])[0]
-            prob_legit = float(prediction_proba[0])
-            prob_phish = float(prediction_proba[1])
+
+            # Map probabilities to labels using model.classes_
+            classes = getattr(model, 'classes_', None)
+            try:
+                classes_list = list(classes) if classes is not None else [0, 1]
+                if 1 in classes_list:
+                    idx_phish = classes_list.index(1)
+                elif 'phishing' in classes_list:
+                    idx_phish = classes_list.index('phishing')
+                else:
+                    idx_phish = 1 if len(classes_list) > 1 else 0
+            except Exception:
+                idx_phish = 1
+
+            prob_phish = float(prediction_proba[idx_phish])
+            prob_legit = float(prediction_proba[1 - idx_phish])
             
             if prob_phish >= threshold:
                 prediction = "phishing"
@@ -525,9 +549,8 @@ async def predict_url(request: URLRequest, model=Depends(get_model_dependency)):
         warnings = analyze_url_warnings(url, features)
         
         # Extract detailed URL structure
-        import urllib.parse
         import tldextract
-        parsed = urllib.parse.urlparse(url)
+        parsed = urlparse(url)
         extracted = tldextract.extract(url)
         
         # Find suspicious keywords
@@ -705,7 +728,7 @@ async def predict_url(request: URLRequest, model=Depends(get_model_dependency)):
         
         # Create detailed response
         result = PredictionResponse(
-            url=url,
+            url=original_url,
             prediction=prediction,
             confidence=round(confidence, 4),
             risk_level=risk_level,

@@ -33,6 +33,7 @@ A full-stack AI-powered phishing website detection system built with MERN stack 
 - **Node.js** (v16+ recommended)
 - **Python** (v3.8+ recommended)
 - **MongoDB** (local or Atlas)
+- **Redis** (v6+ recommended, optional but recommended for caching)
 - **Git**
 
 ## 🚀 Quick Start
@@ -131,6 +132,9 @@ ML_API_ENDPOINT=/predict
 CORS_ORIGIN=http://localhost:3000
 RATE_LIMIT_WINDOW_MS=900000
 RATE_LIMIT_MAX_REQUESTS=100
+REDIS_ENABLED=true
+REDIS_URL=redis://localhost:6379
+REDIS_CACHE_TTL_SECONDS=3600
 ```
 
 ### ML API (.env)

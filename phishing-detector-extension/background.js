@@ -76,6 +76,7 @@ async function checkUrl(url) {
     try {
       const response = await fetch(apiUrl, {
         method: "POST",
+        mode: "cors",
         headers: { 
           "Content-Type": "application/json",
           "X-Requested-With": "XMLHttpRequest"
@@ -102,11 +103,13 @@ async function checkUrl(url) {
       // Update badge for the current tab
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       if (tab && tab.url === url) {
-        updateBadge(data.prediction);
+        // Backend returns prediction: true for PHISHING, false for SAFE
+        const badgeStatus = data.prediction ? 'dangerous' : 'safe';
+        updateBadge(badgeStatus);
       }
 
       // Log alert for dangerous sites
-      if (data.prediction === "dangerous") {
+      if (data.prediction === true) {
         logAlert(`The site ${new URL(url).hostname} seems dangerous!`);
       }
       

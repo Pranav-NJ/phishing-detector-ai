@@ -1,0 +1,44 @@
+version: "3.8"
+services:
+  ml-api:
+    build: ./ml-api
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  server:
+    build: ./server
+    ports:
+      - "5000:5000"
+    environment:
+      - ML_API_URL=http://ml-api:8000
+      - MONGODB_URI=mongodb://mongo:27017/phishing_detector
+      - REDIS_URL=redis://redis:6379
+      - REDIS_ENABLED=true
+    depends_on:
+      - ml-api
+      - mongo
+      - redis
+    restart: unless-stopped
+
+  client:
+    build: ./client
+    ports:
+      - "3000:3000"
+    environment:
+      - REACT_APP_API_URL=http://server:5000
+    depends_on:
+      - server
+    restart: unless-stopped
+
+  mongo:
+    image: mongo:6
+    ports:
+      - "27017:27017"
+    restart: unless-stopped
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+    restart: unless-stopped

@@ -7,6 +7,12 @@ import os
 import sys
 import joblib
 
+# Ensure Windows consoles and subprocess captures can handle emoji output.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 # ================================
 # FIX: ADD PROJECT ROOT + utils/
 # ================================
@@ -16,6 +22,17 @@ sys.path.insert(0, BASE_DIR)
 sys.path.insert(0, UTILS_DIR)
 
 from enhanced_feature_extraction import CompleteFeatureExtractor
+
+
+def normalize_url_for_analysis(url):
+    """Force a canonical HTTPS URL so http/https variants score the same."""
+    import urllib.parse
+
+    parsed = urllib.parse.urlparse(url.strip())
+    if not parsed.scheme:
+        parsed = urllib.parse.urlparse(f"http://{url.strip()}")
+    parsed = parsed._replace(scheme="https")
+    return urllib.parse.urlunparse(parsed)
 
 
 # ============================================================
@@ -48,6 +65,8 @@ def check_rule_based_phishing(features):
 
 def predict_url(url):
     """Predict if the given URL is phishing or legitimate."""
+    original_url = url.strip()
+    canonical_url = normalize_url_for_analysis(original_url)
 
     # ==============================================
     # FIX: LOAD MODEL FROM ../models/phishing_model.pkl
@@ -70,10 +89,11 @@ def predict_url(url):
     feature_names = model_data["feature_names"]
     threshold = model_data["optimal_threshold"]
 
-    print(f"\n🔍 Analyzing URL: {url}")
+    print(f"\n🔍 Analyzing URL: {original_url}")
+    print(f"   Canonical URL: {canonical_url}")
 
     # Extract features
-    features = feature_extractor.extract_all_features(url)
+    features = feature_extractor.extract_all_features(canonical_url)
 
     # ===================================================
     # RULE-BASED CHECK FIRST
@@ -90,8 +110,22 @@ def predict_url(url):
         feature_vector = [features.get(name, 0.0) for name in feature_names]
         proba = model.predict_proba([feature_vector])[0]
 
-        prob_legit = float(proba[0])
-        prob_phish = float(proba[1])
+        # Ensure we map probabilities to labels using model.classes_
+        classes = getattr(model, 'classes_', None)
+        try:
+            classes_list = list(classes) if classes is not None else [0, 1]
+            if 1 in classes_list:
+                idx_phish = classes_list.index(1)
+            elif 'phishing' in classes_list:
+                idx_phish = classes_list.index('phishing')
+            else:
+                # Fallback: assume index 1 is phishing
+                idx_phish = 1 if len(classes_list) > 1 else 0
+        except Exception:
+            idx_phish = 1
+
+        prob_phish = float(proba[idx_phish])
+        prob_legit = float(proba[1 - idx_phish])
 
         if prob_phish >= threshold:
             prediction = "PHISHING"
@@ -126,12 +160,12 @@ def predict_url(url):
     import urllib.parse
     import tldextract
     
-    parsed = urllib.parse.urlparse(url)
-    extracted = tldextract.extract(url)
+    parsed = urllib.parse.urlparse(canonical_url)
+    extracted = tldextract.extract(canonical_url)
     
     # Find which suspicious keywords were detected
     suspicious_keywords_found = []
-    url_lower = url.lower()
+    url_lower = canonical_url.lower()
     for keyword in feature_extractor.suspicious_keywords:
         if keyword in url_lower:
             suspicious_keywords_found.append(keyword)

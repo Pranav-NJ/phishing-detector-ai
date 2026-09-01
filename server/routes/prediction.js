@@ -2,8 +2,18 @@ const express = require('express');
 const axios = require('axios');
 const Joi = require('joi');
 const Prediction = require('../models/Prediction');
+const { getRedisClient, isRedisEnabled } = require('../utils/redisClient');
 
 const router = express.Router();
+
+function normalizeUrlForAnalysis(rawUrl) {
+  let urlStr = rawUrl.trim();
+  // Simply ensure it starts with http:// or https:// without formatting away the user's explicit path
+  if (!urlStr.startsWith('http://') && !urlStr.startsWith('https://')) {
+    urlStr = 'https://' + urlStr;
+  }
+  return urlStr;
+}
 
 // Validation schema for URL input
 const urlSchema = Joi.object({
@@ -33,6 +43,33 @@ router.post('/predict', async (req, res) => {
     }
 
     const { url } = value;
+    const originalUrl = url.trim();
+    const canonicalUrl = normalizeUrlForAnalysis(originalUrl);
+
+    // Attempt to serve cached result first
+    const cacheTtlSeconds = parseInt(process.env.REDIS_CACHE_TTL_SECONDS, 10) || 3600;
+    const cacheKey = `prediction:${canonicalUrl.toLowerCase()}`;
+    if (isRedisEnabled()) {
+      try {
+        const redisClient = getRedisClient();
+        if (redisClient) {
+          const cached = await redisClient.get(cacheKey);
+          if (cached) {
+            const cachedResponse = JSON.parse(cached);
+            return res.json({
+              ...cachedResponse,
+              processingTime: Date.now() - startTime,
+              cache: 'hit',
+            });
+          }
+        } else {
+          // Redis enabled in config but client not initialized — skip caching
+          console.warn('⚠️ Redis enabled but client unavailable; skipping cache read');
+        }
+      } catch (cacheReadError) {
+        console.error('Redis cache read error:', cacheReadError && cacheReadError.message ? cacheReadError.message : cacheReadError);
+      }
+    }
 
     // Call ML API
     const mlApiUrl = `${process.env.ML_API_URL}${process.env.ML_API_ENDPOINT || '/predict'}`;
@@ -41,7 +78,7 @@ router.post('/predict', async (req, res) => {
     try {
       mlResponse = await axios.post(
         mlApiUrl,
-        { url },
+        { url: canonicalUrl },
         {
           timeout: 30000,
           headers: {
@@ -52,17 +89,52 @@ router.post('/predict', async (req, res) => {
     } catch (mlError) {
       console.error('ML API Error:', mlError.message);
 
-      if (mlError.code === 'ECONNREFUSED') {
-        return res.status(503).json({
-          error: 'ML service is currently unavailable. Please try again later.',
+      // If ML API is down, attempt CLI fallback using the project's Python script
+      try {
+        const { execFile } = require('child_process');
+        const pyPath = require('path').join(__dirname, '..', '..', 'ml-api', 'scripts', 'predict_model.py');
+
+        const cliResult = await new Promise((resolve, reject) => {
+          execFile('python', [pyPath, canonicalUrl], { timeout: 15000 }, (err, stdout, stderr) => {
+            if (err) return reject(err);
+            return resolve(stdout);
+          });
+        });
+
+        // Parse CLI output to extract prediction and confidence
+        const out = String(cliResult);
+        const isPhishing = /PHISHING DETECTED!/i.test(out);
+        const confMatch = out.match(/Confidence:\s*([0-9]+\.?[0-9]*)%/i);
+        const confidence = confMatch ? parseFloat(confMatch[1]) / 100.0 : 0.5;
+
+        mlResponse = {
+          data: {
+            prediction: isPhishing ? 'phishing' : 'legitimate',
+            confidence: confidence,
+            details: { source: 'cli-fallback' },
+            risk_level: 'UNKNOWN',
+            risk_score: 0,
+            threshold_used: null,
+            warnings: [],
+            rule_triggered: null
+          }
+        };
+
+      } catch (cliError) {
+        console.error('CLI fallback failed:', cliError && cliError.message ? cliError.message : cliError);
+
+        if (mlError.code === 'ECONNREFUSED') {
+          return res.status(503).json({
+            error: 'ML service is currently unavailable. Please try again later.',
+            success: false
+          });
+        }
+
+        return res.status(500).json({
+          error: 'Error processing your request. Please try again.',
           success: false
         });
       }
-
-      return res.status(500).json({
-        error: 'Error processing your request. Please try again.',
-        success: false
-      });
     }
 
     // Extract prediction and confidence
@@ -74,7 +146,7 @@ router.post('/predict', async (req, res) => {
     // Save prediction to DB
     try {
       const predictionRecord = new Prediction({
-        url,
+        url: originalUrl,
         prediction: prediction === 'phishing',
         confidence: confidence || 0.5,
         userAgent: req.get('User-Agent') || '',
@@ -88,44 +160,39 @@ router.post('/predict', async (req, res) => {
       // Continue even if DB save fails
     }
 
-    // Host-based safe overrides
-    const hostname = new URL(url).hostname.toLowerCase();
-    const SAFE_HOSTS = new Set([
-      'chatgpt.com',
-      'openai.com',
-      'chat.openai.com',
-      'platform.openai.com',
-      'auth.openai.com'
-    ]);
-
-    let predictionStatus = 'safe';
-    let isPhishing = false;
-
-    if (SAFE_HOSTS.has(hostname)) {
-      predictionStatus = 'safe';
-      isPhishing = false;
-    } else if (prediction === 'phishing' || prediction === 'dangerous') {
-      predictionStatus = 'phishing';
-      isPhishing = true;
-    } else if (confidence && confidence < 0.6) {
-      predictionStatus = 'suspicious';
-      isPhishing = false;
-    }
-
-    res.json({
-      url,
-      prediction: isPhishing,
+    // Use the ML API response natively without Express-level overrides
+    const predictionPayload = {
+      url: originalUrl,
+      canonical_url: canonicalUrl,
+      prediction: prediction === 'phishing', // Use ML model directly
       confidence: confidence || 0.5,
       processingTime,
       success: true,
-      // Pass through all detailed analysis from ML API
       details: mlData.details || {},
       risk_level: mlData.risk_level || 'UNKNOWN',
       risk_score: mlData.risk_score || 0,
       threshold_used: mlData.threshold_used,
       warnings: mlData.warnings || [],
-      rule_triggered: mlData.rule_triggered
-    });
+      rule_triggered: mlData.rule_triggered,
+      cache: 'miss'
+    };
+
+    if (isRedisEnabled()) {
+      try {
+        const redisClient = getRedisClient();
+        if (redisClient) {
+          await redisClient.set(cacheKey, JSON.stringify(predictionPayload), {
+            EX: cacheTtlSeconds,
+          });
+        } else {
+          console.warn('⚠️ Redis enabled but client unavailable; skipping cache write');
+        }
+      } catch (cacheWriteError) {
+        console.error('Redis cache write error:', cacheWriteError && cacheWriteError.message ? cacheWriteError.message : cacheWriteError);
+      }
+    }
+
+    return res.json(predictionPayload);
   } catch (error) {
     console.error('Prediction endpoint error:', error);
     res.status(500).json({
@@ -141,6 +208,16 @@ router.get('/history', async (req, res) => {
     const limit = parseInt(req.query.limit) || 10;
     const maxLimit = 100;
     const finalLimit = Math.min(limit, maxLimit);
+
+    // Skip database operations in development without MongoDB
+    if (process.env.NODE_ENV === 'development' && !process.env.MONGODB_URI) {
+      return res.json({
+        predictions: [],
+        count: 0,
+        success: true,
+        message: 'History not available in development mode without database'
+      });
+    }
 
     const predictions = await Prediction.getRecent(finalLimit);
 
@@ -161,6 +238,18 @@ router.get('/history', async (req, res) => {
 // GET /api/stats - Prediction statistics
 router.get('/stats', async (req, res) => {
   try {
+    // Skip database operations in development without MongoDB
+    if (process.env.NODE_ENV === 'development' && !process.env.MONGODB_URI) {
+      return res.json({
+        totalPredictions: 0,
+        phishingDetected: 0,
+        legitimateDetected: 0,
+        averageConfidence: 0,
+        success: true,
+        message: 'Statistics not available in development mode without database'
+      });
+    }
+
     const stats = await Prediction.getStats();
 
     res.json({
@@ -198,13 +287,17 @@ router.get('/health', async (req, res) => {
       console.log('Database health check failed:', error.message);
     }
 
+    // Redis cache health check
+    const redisHealthy = isRedisEnabled();
+
     const overall = mlApiHealthy && dbHealthy;
 
     res.status(overall ? 200 : 503).json({
       status: overall ? 'healthy' : 'unhealthy',
       services: {
         mlApi: mlApiHealthy ? 'healthy' : 'unhealthy',
-        database: dbHealthy ? 'healthy' : 'unhealthy'
+        database: dbHealthy ? 'healthy' : 'unhealthy',
+        redisCache: redisHealthy ? 'healthy' : 'disabled'
       },
       timestamp: new Date().toISOString(),
       success: true

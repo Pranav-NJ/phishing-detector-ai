@@ -53,6 +53,19 @@ try {
     Write-Host " ? UNKNOWN" -ForegroundColor Yellow
 }
 
+# Check Redis
+Write-Host "5. Redis..." -NoNewline
+try {
+    $redis = Get-Service -ErrorAction Stop | Where-Object { $_.Name -like "*redis*" }
+    if ($redis -and $redis.Status -eq "Running") {
+        Write-Host " ✓ RUNNING" -ForegroundColor Green
+    } else {
+        Write-Host " ? NOT DETECTED (optional for caching)" -ForegroundColor Yellow
+    }
+} catch {
+    Write-Host " ? NOT DETECTED (optional for caching)" -ForegroundColor Yellow
+}
+
 Write-Host "`n========================================" -ForegroundColor Cyan
 
 if ($allHealthy) {
